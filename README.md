@@ -1,4 +1,14 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Radian - Sports Analytics Dashboard
+
+This is a sports analytics dashboard built with Next.js, TypeScript, Shadcn UI, and Supabase. The application allows for real-time tracking and visualization of player movement data collected from ESP32 devices via the Web Serial API.
+
+## Features
+
+- Connect to ESP32 devices using Web Serial API
+- Record and visualize player movement data in real-time
+- Store and analyze historical session data
+- Manage player profiles and session information
+- Dark mode support with customizable theme
 
 ## Getting Started
 
@@ -16,7 +26,30 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project Structure
+
+- `app/`: Next.js App Router pages and layouts
+- `components/`: Reusable UI components
+- `lib/`: Utility functions and services
+  - `supabase/`: Supabase client and database operations
+  - `serial/`: Web Serial API utilities
+  - `data/`: Data processing and transformation
+- `hooks/`: Custom React hooks
+- `types/`: TypeScript type definitions
+- `providers/`: Context providers for state management
+
+## Technologies Used
+
+- [Next.js](https://nextjs.org/) - React framework
+- [TypeScript](https://www.typescriptlang.org/) - Type safety
+- [Shadcn UI](https://ui.shadcn.com/) - Component library
+- [Tailwind CSS](https://tailwindcss.com/) - Styling
+- [Supabase](https://supabase.com/) - Backend and database
+- [Web Serial API](https://developer.mozilla.org/en-US/docs/Web/API/Serial) - Device communication
+
+## Development
+
+This project follows a structured implementation plan with clearly defined steps. See the `project-steps.md` file for details on the implementation roadmap.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
