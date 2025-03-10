@@ -157,12 +157,23 @@ export function useSerialConnection(
     
     try {
       setStatus(ConnectionStatus.CONNECTING);
+      
+      // Log the filters being used
+      console.log('Connecting with filters:', filters || 'No filters');
+      
+      // Explicitly request port access before connecting
+      if ('serial' in navigator && !filters) {
+        console.log('No filters provided, using default ESP32 filters');
+        filters = ESP32_FILTERS;
+      }
+      
       await connectionRef.current.connect(filters);
       
       // Get device info
       const info = await connectionRef.current.getDeviceInfo();
       setDeviceInfo(info);
     } catch (err) {
+      console.error('Connection error:', err);
       setStatus(ConnectionStatus.ERROR);
       setError(err as Error);
       throw err;

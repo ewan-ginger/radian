@@ -9,9 +9,9 @@ interface MainLayoutProps {
 
 export function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div className="flex min-h-screen flex-col">
+    <div className="flex flex-col min-h-screen">
       <Header />
-      <main className="flex-1 container py-8">
+      <main className="flex-1 flex flex-col items-center justify-center">
         {children}
       </main>
       <Footer />

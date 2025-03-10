@@ -99,13 +99,25 @@ export class SerialConnection {
     try {
       this.setStatus(ConnectionStatus.CONNECTING);
       
-      // Request port from user
-      this.port = await navigator.serial.requestPort({
-        filters: filters || ESP32_FILTERS
-      });
+      console.log('Requesting port with filters:', filters || ESP32_FILTERS);
+      
+      // Request port from user with more relaxed filters if none provided
+      if (!filters || filters.length === 0) {
+        console.log('No filters provided, using empty filters to show all devices');
+        // Request port without filters to show all available devices
+        this.port = await navigator.serial.requestPort({});
+      } else {
+        // Request port with the provided filters
+        this.port = await navigator.serial.requestPort({
+          filters: filters
+        });
+      }
+      
+      console.log('Port selected:', this.port);
       
       // Open the port
       await this.port.open(this.config);
+      console.log('Port opened with config:', this.config);
       
       // Set up streams
       this.setupStreams();
@@ -119,6 +131,7 @@ export class SerialConnection {
       this.setStatus(ConnectionStatus.CONNECTED);
       this.dispatchEvent(SerialEventType.CONNECT, { port: this.port });
     } catch (error) {
+      console.error('Connection error:', error);
       this.handleError(error as Error);
       throw error;
     }

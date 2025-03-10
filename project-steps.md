@@ -135,7 +135,7 @@
  - **Step Dependencies**: Step 2
  - **User Instructions**: None
 
-- [ ] Step 9: Implement device connection interface
+- [x] Step 9: Implement device connection interface
  - **Task**: Create UI components for connecting to ESP32 devices, showing connection status, and controlling data recording
  - **Files**:
    - `components/devices/DeviceConnection.tsx`: Main device connection component
@@ -146,7 +146,7 @@
  - **Step Dependencies**: Steps 6, 8
  - **User Instructions**: None
 
-- [ ] Step 10: Implement data visualization components
+- [x] Step 10: Implement data visualization components
  - **Task**: Create components for visualizing player orientation data with auto-scrolling graphs
  - **Files**:
    - `package.json`: Add data visualization dependencies (recharts)
@@ -168,7 +168,7 @@
  - **User Instructions**: None
 
 ## Main Application Features
-- [ ] Step 12: Implement hardware connection feature
+- [x] Step 12: Implement hardware connection feature
  - **Task**: Integrate the Web Serial API utilities with the UI to create a complete hardware connection feature
  - **Files**:
    - `app/page.tsx`: Update main page to include device connection section
@@ -178,7 +178,7 @@
  - **Step Dependencies**: Steps 6, 9
  - **User Instructions**: None
 
-- [ ] Step 13: Implement data recording and processing
+- [x] Step 13: Implement data recording and processing
  - **Task**: Create functionality to start/stop recording sessions, process incoming data, and store it in Supabase
  - **Files**:
    - `hooks/useDataRecording.ts`: Hook for managing data recording state
