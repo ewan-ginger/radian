@@ -11,7 +11,7 @@
  - **Step Dependencies**: None
  - **User Instructions**: Run `npx create-next-app@latest radian --typescript` and follow the prompts to set up the project
 
-- [ ] Step 2: Install and configure Shadcn UI with dark mode
+- [x] Step 2: Install and configure Shadcn UI with dark mode
  - **Task**: Set up Shadcn UI, configure dark mode theme, and establish the design system with specified accent colors
  - **Files**:
    - `package.json`: Add Shadcn UI dependencies
@@ -23,7 +23,7 @@
  - **Step Dependencies**: Step 1
  - **User Instructions**: Follow the Shadcn UI installation instructions with `npx shadcn-ui@latest init` and add base components with `npx shadcn-ui@latest add button card toast`
 
-- [ ] Step 3: Set up Supabase integration
+- [x] Step 3: Set up Supabase integration
  - **Task**: Configure Supabase client for Next.js, set up environment variables, and create utility functions for database operations
  - **Files**:
    - `package.json`: Add Supabase dependencies
