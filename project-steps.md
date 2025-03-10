@@ -41,7 +41,7 @@
       ```
 
 ## Database Schema and Data Management
-- [ ] Step 4: Create database schema for players and session data
+- [x] Step 4: Create database schema for players and session data
  - **Task**: Design and implement database tables to store player information, session data, and sensor readings
  - **Files**:
    - `lib/supabase/schema.ts`: Database schema definitions
@@ -93,7 +93,7 @@
    INSERT INTO players (name, device_id) VALUES ('Player 1', '1');
    ```
 
-- [ ] Step 5: Implement data service functions
+- [x] Step 5: Implement data service functions
  - **Task**: Create service functions to handle data operations (create, read, update) for players, sessions, and sensor data
  - **Files**:
    - `lib/services/player-service.ts`: Functions for player data management
@@ -103,7 +103,7 @@
  - **User Instructions**: None
 
 ## Web Serial API Integration
-- [ ] Step 6: Implement Web Serial API utilities
+- [x] Step 6: Implement Web Serial API utilities
  - **Task**: Create utility functions to connect to ESP32 devices using Web Serial API, handle connection status, and manage serial communication
  - **Files**:
    - `lib/serial/serial-connection.ts`: Core Web Serial API functionality
@@ -113,7 +113,7 @@
  - **Step Dependencies**: Step 1
  - **User Instructions**: None
 
-- [ ] Step 7: Implement data packet processing
+- [x] Step 7: Implement data packet processing
  - **Task**: Create functions to parse and process 15-value data packets from ESP32 devices, normalize timestamps, and prepare data for visualization
  - **Files**:
    - `lib/serial/packet-parser.ts`: Functions to parse binary data packets
@@ -124,7 +124,7 @@
  - **User Instructions**: None
 
 ## UI Components
-- [ ] Step 8: Create core layout and navigation components
+- [x] Step 8: Create core layout and navigation components
  - **Task**: Implement the main layout structure with dark mode theme integration and responsive design
  - **Files**:
    - `app/layout.tsx`: Root layout with theme provider
