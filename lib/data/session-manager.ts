@@ -14,6 +14,7 @@ import {
   SessionUpdate, 
   SensorDataInsert 
 } from '@/types/supabase';
+import { getAllPlayers } from '@/lib/services/player-service';
 
 /**
  * Class for managing recording sessions
@@ -114,9 +115,17 @@ export class SessionManager {
    * @returns True if data was added successfully
    */
   async addSensorData(data: number[]): Promise<boolean> {
+    // If no session is in progress, try to start one automatically
     if (!this.isRecording || !this.sessionId) {
-      console.warn('Cannot add data: No session in progress');
-      return false;
+      try {
+        console.log('No active session. Attempting to start a default session...');
+        const defaultName = `Auto-Session-${new Date().toISOString()}`;
+        await this.startSession(defaultName);
+        console.log(`Auto-started session with ID: ${this.sessionId}`);
+      } catch (error) {
+        console.error('Failed to auto-start session:', error);
+        return false;
+      }
     }
     
     try {
@@ -128,18 +137,36 @@ export class SessionManager {
         return false;
       }
       
-      // Extract values in the exact order they are provided
-      // [0]: playerID, [1]: timestamp, [2]: battery, 
-      // [3]: orientX, [4]: orientY, [5]: orientZ, 
-      // [6]: accelX, [7]: accelY, [8]: accelZ, 
-      // [9]: gyroX, [10]: gyroY, [11]: gyroZ, 
-      // [12]: magX, [13]: magY, [14]: magZ
+      // Ensure we have a valid player ID (must be a UUID for Supabase)
+      let playerIdToUse: string | null = this.playerId;
+      if (!playerIdToUse) {
+        // If no player ID is set, try to get the default player
+        try {
+          const players = await getAllPlayers();
+          if (players && players.length > 0) {
+            playerIdToUse = players[0].id;
+            console.log(`Using default player ID: ${playerIdToUse}`);
+          } else {
+            console.error('No players found in the database');
+            return false;
+          }
+        } catch (playerError) {
+          console.error('Error getting players:', playerError);
+          return false;
+        }
+      }
+      
+      // If we still don't have a player ID, we can't proceed
+      if (!playerIdToUse) {
+        console.error('No valid player ID available');
+        return false;
+      }
       
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
-        session_id: this.sessionId,
-        player_id: this.playerId || String(data[0]), // Use provided player ID if available
-        timestamp: Date.now(), // Use current timestamp for consistency
+        session_id: this.sessionId!, // Use non-null assertion since we've already checked above
+        player_id: playerIdToUse, // Use the validated player ID
+        timestamp: data[1] ? Number(data[1]) : Date.now(), // Use provided timestamp or current time
         battery_level: data[2] || 0,
         orientation_x: data[3] || 0,
         orientation_y: data[4] || 0,
@@ -157,15 +184,6 @@ export class SessionManager {
       
       console.log('Formatted sensor data:', JSON.stringify(sensorData, null, 2));
       
-      // Try inserting a single record directly for debugging
-      try {
-        console.log('Attempting to insert a single record directly...');
-        await insertSensorData(sensorData);
-        console.log('Direct insertion successful!');
-      } catch (directError) {
-        console.error('Direct insertion failed:', directError);
-      }
-      
       // Add to buffer
       this.dataBuffer.push(sensorData);
       console.log(`Added data to buffer. Buffer size: ${this.dataBuffer.length}/${this.bufferSize}`);
@@ -177,6 +195,7 @@ export class SessionManager {
         await this.flushBuffer();
       }
       
+      // Always return true if we successfully added the data to the buffer
       return true;
     } catch (error) {
       console.error('Error adding sensor data:', error);
@@ -198,8 +217,19 @@ export class SessionManager {
       console.log(`Flushing ${this.dataBuffer.length} data points to database`);
       console.log('First item in buffer:', JSON.stringify(this.dataBuffer[0], null, 2));
       
+      // Check if we have valid session and player IDs
+      if (!this.sessionId) {
+        console.error('Cannot flush buffer: No session ID');
+        return false;
+      }
+      
+      if (!this.playerId) {
+        console.warn('Warning: No player ID set, using default from data');
+      }
+      
       // Insert the buffered data
       try {
+        console.log('Attempting batch insertion with Supabase...');
         await insertSensorDataBatch(this.dataBuffer);
         console.log('Batch insertion successful!');
       } catch (batchError) {
@@ -211,25 +241,30 @@ export class SessionManager {
         
         for (const record of this.dataBuffer) {
           try {
+            console.log('Inserting single record:', JSON.stringify(record, null, 2));
             await insertSensorData(record);
             successCount++;
+            console.log(`Record ${successCount} inserted successfully`);
           } catch (singleError) {
             console.error('Failed to insert record:', singleError);
+            console.error('Record that failed:', JSON.stringify(record, null, 2));
           }
         }
         
         console.log(`Inserted ${successCount}/${this.dataBuffer.length} records individually.`);
         
         if (successCount === 0) {
+          console.error('All individual insertions failed');
           return false;
         }
       }
       
       // Clear the buffer
+      const bufferSize = this.dataBuffer.length;
       this.dataBuffer = [];
       this.lastFlushTime = Date.now();
       
-      console.log('Data flushed successfully');
+      console.log(`Data flushed successfully: ${bufferSize} records cleared from buffer`);
       return true;
     } catch (error) {
       console.error('Error flushing data buffer:', error);

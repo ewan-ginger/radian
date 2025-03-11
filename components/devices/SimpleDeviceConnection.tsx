@@ -10,6 +10,23 @@ import { formatDuration } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+// Add Web Serial API type definitions
+declare global {
+  interface Navigator {
+    serial: {
+      requestPort(options?: {}): Promise<SerialPort>;
+      getPorts(): Promise<SerialPort[]>;
+    };
+  }
+  
+  interface SerialPort {
+    open(options: { baudRate: number }): Promise<void>;
+    close(): Promise<void>;
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+  }
+}
+
 export function SimpleDeviceConnection() {
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -151,28 +168,25 @@ export function SimpleDeviceConnection() {
           if (line.startsWith('DATA:')) {
             setSensorData(prev => [...prev.slice(-99), line]);
             
-            // Parse data and add to recording if active
-            if (isRecording) {
-              try {
-                // Extract data values from the line
-                // Format: DATA: playerID,timestamp,battery,orientX,orientY,orientZ,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,magX,magY,magZ
-                const dataStr = line.substring(5).trim(); // Remove 'DATA:' prefix and trim
-                const values = dataStr.split(',').map(val => parseFloat(val.trim()));
+            // Process all incoming data - if we're receiving data, we should record it
+            try {
+              // Extract data values from the line
+              // Format: DATA: playerID,timestamp,battery,orientX,orientY,orientZ,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,magX,magY,magZ
+              const dataStr = line.substring(5).trim(); // Remove 'DATA:' prefix and trim
+              const values = dataStr.split(',').map(val => parseFloat(val.trim()));
+              
+              if (values.length >= 15) {
+                // Log the values being sent to addDataPoint
+                console.log('Adding data point to recording with values:', values);
                 
-                if (values.length >= 15) {
-                  // Create a properly formatted data array in the exact order required
-                  // [playerID, timestamp, battery, orientX, orientY, orientZ, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ]
-                  const timestamp = Date.now(); // Use current timestamp for consistency
-                  
-                  // Add data point to recording
-                  console.log('Adding data point to recording:', values);
-                  addDataPoint(values);
-                } else {
-                  console.warn('Invalid data format, expected 15 values but got:', values.length);
-                }
-              } catch (err) {
-                console.error('Error parsing data:', err);
+                // Call addDataPoint with the parsed values
+                const result = addDataPoint(values);
+                console.log('Result of addDataPoint:', result);
+              } else {
+                console.warn('Invalid data format, expected 15 values but got:', values.length);
               }
+            } catch (err) {
+              console.error('Error parsing data:', err);
             }
           }
         });
@@ -210,18 +224,26 @@ export function SimpleDeviceConnection() {
     }
     
     try {
+      console.log('Starting recording session with name:', sessionName);
       // Start recording session first
-      await startRecording(sessionName);
+      const recordingStarted = await startRecording(sessionName);
+      console.log('Recording started:', recordingStarted);
+      
+      if (!recordingStarted) {
+        console.error('Failed to start recording session');
+        return;
+      }
       
       // Then send start command to the device
       await sendCommand('start');
+      
+      // Set streaming state
       setIsStreaming(true);
+      console.log('Streaming started. isStreaming:', true);
     } catch (error) {
       console.error('Error starting streaming:', error);
       // If there was an error, stop the recording
-      if (isRecording) {
-        await stopRecording();
-      }
+      await stopRecording();
     }
   }
   
@@ -236,9 +258,9 @@ export function SimpleDeviceConnection() {
       setIsStreaming(false);
       
       // Stop recording session
-      if (isRecording) {
-        await stopRecording();
-      }
+      console.log('Stopping recording session');
+      await stopRecording();
+      console.log('Recording stopped');
       
       // Clear session name
       setSessionName('');
@@ -295,7 +317,7 @@ export function SimpleDeviceConnection() {
         ) : (
           <>
             <div className="flex flex-col space-y-4">
-              {isRecording && (
+              {isStreaming && (
                 <div className="bg-muted p-3 rounded-md">
                   <div className="flex justify-between items-center">
                     <div>

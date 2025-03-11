@@ -153,22 +153,45 @@ export function useDataRecording({
   
   // Add data point
   const addDataPoint = useCallback(async (data: number[]): Promise<boolean> => {
-    if (!sessionManagerRef.current || !isRecording) {
+    if (!sessionManagerRef.current) {
+      console.log('Cannot add data point: No session manager');
       return false;
     }
     
-    try {
-      console.log('Adding data point to session:', data);
-      const result = await sessionManagerRef.current.addSensorData(data);
-      if (result) {
-        setDataPoints(prev => prev + 1);
+    // Check if we need to start a session first
+    if (!isRecording) {
+      try {
+        console.log('Received data but no active session. Starting a default session...');
+        const defaultName = `Auto-Session-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+        await startRecording(defaultName);
+      } catch (error) {
+        console.error('Failed to auto-start session:', error);
+        return false;
       }
+    }
+    
+    try {
+      console.log('Adding data point to session manager:', data);
+      const result = await sessionManagerRef.current.addSensorData(data);
+      console.log('Result from session manager addSensorData:', result);
+      
+      if (result) {
+        console.log('Incrementing data points counter');
+        setDataPoints(prev => {
+          const newCount = prev + 1;
+          console.log('New data points count:', newCount);
+          return newCount;
+        });
+      } else {
+        console.log('Not incrementing counter - addSensorData returned false');
+      }
+      
       return result;
     } catch (error) {
       console.error('Error adding data point:', error);
       return false;
     }
-  }, [isRecording]);
+  }, [isRecording, startRecording]);
   
   return {
     isRecording,
