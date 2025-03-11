@@ -160,13 +160,27 @@ export function useDataRecording({
     
     // Check if we need to start a session first
     if (!isRecording) {
-      try {
-        console.log('Received data but no active session. Starting a default session...');
-        const defaultName = `Auto-Session-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-        await startRecording(defaultName);
-      } catch (error) {
-        console.error('Failed to auto-start session:', error);
-        return false;
+      // First check if the session manager already has an active session
+      const sessionActive = sessionManagerRef.current.isSessionInProgress();
+      
+      if (sessionActive) {
+        // Session manager has an active session but our state doesn't reflect it
+        // Update our state to match
+        console.log('Session manager has an active session. Updating state...');
+        const sessionId = sessionManagerRef.current.getSessionId();
+        setSessionId(sessionId);
+        setIsRecording(true);
+        setStartTime(Date.now());
+      } else {
+        // No active session anywhere, start a new one
+        try {
+          console.log('No active session. Starting a default session...');
+          const defaultName = `Auto-Session-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+          await startRecording(defaultName);
+        } catch (error) {
+          console.error('Failed to auto-start session:', error);
+          return false;
+        }
       }
     }
     

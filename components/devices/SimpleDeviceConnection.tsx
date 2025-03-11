@@ -41,13 +41,25 @@ export function SimpleDeviceConnection() {
     dataPoints, 
     startRecording, 
     stopRecording, 
-    addDataPoint 
+    addDataPoint,
+    sessionId
   } = useRecording();
   
   const portRef = useRef<SerialPort | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const readLoopRef = useRef<boolean>(false);
+  
+  // Sync isStreaming with isRecording
+  useEffect(() => {
+    if (isRecording && !isStreaming) {
+      console.log('Recording is active but streaming state is not. Updating streaming state.');
+      setIsStreaming(true);
+    } else if (!isRecording && isStreaming) {
+      console.log('Recording is not active but streaming state is. Updating streaming state.');
+      setIsStreaming(false);
+    }
+  }, [isRecording, isStreaming]);
   
   // Clean up on unmount
   useEffect(() => {
@@ -168,7 +180,7 @@ export function SimpleDeviceConnection() {
           if (line.startsWith('DATA:')) {
             setSensorData(prev => [...prev.slice(-99), line]);
             
-            // Process all incoming data - if we're receiving data, we should record it
+            // Process all incoming data
             try {
               // Extract data values from the line
               // Format: DATA: playerID,timestamp,battery,orientX,orientY,orientZ,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,magX,magY,magZ
@@ -180,8 +192,11 @@ export function SimpleDeviceConnection() {
                 console.log('Adding data point to recording with values:', values);
                 
                 // Call addDataPoint with the parsed values
-                const result = addDataPoint(values);
-                console.log('Result of addDataPoint:', result);
+                addDataPoint(values).then(result => {
+                  console.log('Result of addDataPoint:', result);
+                }).catch(err => {
+                  console.error('Error in addDataPoint:', err);
+                });
               } else {
                 console.warn('Invalid data format, expected 15 values but got:', values.length);
               }
@@ -317,11 +332,13 @@ export function SimpleDeviceConnection() {
         ) : (
           <>
             <div className="flex flex-col space-y-4">
-              {isStreaming && (
+              {(isStreaming || isRecording) && (
                 <div className="bg-muted p-3 rounded-md">
                   <div className="flex justify-between items-center">
                     <div>
-                      <span className="text-sm font-medium">Recording Session: {sessionName}</span>
+                      <span className="text-sm font-medium">
+                        Recording Session: {sessionName || `Session ${sessionId?.substring(0, 8) || ''}`}
+                      </span>
                       <div className="text-xs text-muted-foreground">
                         Duration: {formatDuration(recordingDuration)}
                       </div>
@@ -343,7 +360,7 @@ export function SimpleDeviceConnection() {
                     value={sessionName} 
                     onChange={(e) => setSessionName(e.target.value)}
                     placeholder="Enter a name for this session"
-                    disabled={isStreaming}
+                    disabled={isStreaming || isRecording}
                   />
                   {sessionNameError && (
                     <p className="text-xs text-destructive">{sessionNameError}</p>
@@ -353,7 +370,7 @@ export function SimpleDeviceConnection() {
                 <div>
                   <h3 className="text-sm font-medium mb-2">Device Control</h3>
                   <div className="flex flex-wrap gap-2">
-                    {isStreaming ? (
+                    {(isStreaming || isRecording) ? (
                       <Button 
                         variant="outline"
                         className="flex items-center gap-2"
@@ -377,7 +394,7 @@ export function SimpleDeviceConnection() {
                       variant="outline" 
                       className="flex items-center gap-2"
                       onClick={handleReset}
-                      disabled={isStreaming}
+                      disabled={isStreaming || isRecording}
                     >
                       <RefreshCw className="h-4 w-4" />
                       Reset
@@ -387,7 +404,7 @@ export function SimpleDeviceConnection() {
                       variant="outline" 
                       className="flex items-center gap-2"
                       onClick={disconnectSerial}
-                      disabled={isStreaming}
+                      disabled={isStreaming || isRecording}
                     >
                       <Usb className="h-4 w-4" />
                       Disconnect

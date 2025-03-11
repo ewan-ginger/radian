@@ -115,17 +115,10 @@ export class SessionManager {
    * @returns True if data was added successfully
    */
   async addSensorData(data: number[]): Promise<boolean> {
-    // If no session is in progress, try to start one automatically
+    // Check if a session is in progress
     if (!this.isRecording || !this.sessionId) {
-      try {
-        console.log('No active session. Attempting to start a default session...');
-        const defaultName = `Auto-Session-${new Date().toISOString()}`;
-        await this.startSession(defaultName);
-        console.log(`Auto-started session with ID: ${this.sessionId}`);
-      } catch (error) {
-        console.error('Failed to auto-start session:', error);
-        return false;
-      }
+      console.warn('Cannot add data: No session in progress');
+      return false;
     }
     
     try {
