@@ -34,6 +34,7 @@ export function SimpleDeviceConnection() {
   const [sensorData, setSensorData] = useState<string[]>([]);
   const [sessionName, setSessionName] = useState('');
   const [sessionNameError, setSessionNameError] = useState('');
+  const [isStopping, setIsStopping] = useState(false);
   
   const { 
     isRecording, 
@@ -180,28 +181,29 @@ export function SimpleDeviceConnection() {
           if (line.startsWith('DATA:')) {
             setSensorData(prev => [...prev.slice(-99), line]);
             
-            // Process all incoming data
-            try {
-              // Extract data values from the line
-              // Format: DATA: playerID,timestamp,battery,orientX,orientY,orientZ,accelX,accelY,accelZ,gyroX,gyroY,gyroZ,magX,magY,magZ
-              const dataStr = line.substring(5).trim(); // Remove 'DATA:' prefix and trim
-              const values = dataStr.split(',').map(val => parseFloat(val.trim()));
-              
-              if (values.length >= 15) {
-                // Log the values being sent to addDataPoint
-                console.log('Adding data point to recording with values:', values);
+            // Only process data if we're not in the process of stopping
+            if (!isStopping) {
+              try {
+                // Extract data values from the line
+                const dataStr = line.substring(5).trim();
+                const values = dataStr.split(',').map(val => parseFloat(val.trim()));
                 
-                // Call addDataPoint with the parsed values
-                addDataPoint(values).then(result => {
-                  console.log('Result of addDataPoint:', result);
-                }).catch(err => {
-                  console.error('Error in addDataPoint:', err);
-                });
-              } else {
-                console.warn('Invalid data format, expected 15 values but got:', values.length);
+                if (values.length >= 15) {
+                  console.log('Adding data point to recording with values:', values);
+                  
+                  addDataPoint(values).then(result => {
+                    console.log('Result of addDataPoint:', result);
+                  }).catch(err => {
+                    console.error('Error in addDataPoint:', err);
+                  });
+                } else {
+                  console.warn('Invalid data format, expected 15 values but got:', values.length);
+                }
+              } catch (err) {
+                console.error('Error parsing data:', err);
               }
-            } catch (err) {
-              console.error('Error parsing data:', err);
+            } else {
+              console.log('Ignoring data point while stopping session');
             }
           }
         });
@@ -268,9 +270,15 @@ export function SimpleDeviceConnection() {
     }
     
     try {
+      // Set stopping flag to prevent processing new data
+      setIsStopping(true);
+      
       // Send stop command to the device
       await sendCommand('stop');
       setIsStreaming(false);
+      
+      // Wait a short moment to ensure any in-flight data is processed
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Stop recording session
       console.log('Stopping recording session');
@@ -279,8 +287,14 @@ export function SimpleDeviceConnection() {
       
       // Clear session name
       setSessionName('');
+      
+      // Reset stopping flag after a delay to ensure no new data is processed
+      setTimeout(() => {
+        setIsStopping(false);
+      }, 2000);
     } catch (error) {
       console.error('Error stopping streaming:', error);
+      setIsStopping(false);
     }
   }
   

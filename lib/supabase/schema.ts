@@ -35,7 +35,7 @@ CREATE TABLE ${SENSOR_DATA_TABLE} (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   session_id UUID REFERENCES ${SESSIONS_TABLE}(id),
   player_id UUID REFERENCES ${PLAYERS_TABLE}(id),
-  timestamp BIGINT NOT NULL,
+  timestamp float8 NOT NULL,
   accelerometer_x REAL,
   accelerometer_y REAL,
   accelerometer_z REAL,

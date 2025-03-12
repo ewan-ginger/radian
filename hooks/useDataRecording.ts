@@ -41,9 +41,20 @@ export function useDataRecording({
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [dataPoints, setDataPoints] = useState(0);
   const [startTime, setStartTime] = useState<number | null>(null);
+  const [recentlyStopped, setRecentlyStopped] = useState(false);
   
   const sessionManagerRef = useRef<SessionManager | null>(null);
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const cooldownTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (cooldownTimeoutRef.current) {
+        clearTimeout(cooldownTimeoutRef.current);
+      }
+    };
+  }, []);
   
   // Initialize session manager
   useEffect(() => {
@@ -143,6 +154,16 @@ export function useDataRecording({
       await sessionManagerRef.current.endSession();
       setIsRecording(false);
       setStartTime(null);
+      
+      // Set recently stopped flag and clear it after 2 seconds
+      setRecentlyStopped(true);
+      if (cooldownTimeoutRef.current) {
+        clearTimeout(cooldownTimeoutRef.current);
+      }
+      cooldownTimeoutRef.current = setTimeout(() => {
+        setRecentlyStopped(false);
+      }, 2000); // 2 second cooldown
+      
       console.log('Recording session stopped');
       return true;
     } catch (error) {
@@ -155,6 +176,12 @@ export function useDataRecording({
   const addDataPoint = useCallback(async (data: number[]): Promise<boolean> => {
     if (!sessionManagerRef.current) {
       console.log('Cannot add data point: No session manager');
+      return false;
+    }
+    
+    // If we recently stopped recording, ignore any incoming data points
+    if (recentlyStopped) {
+      console.log('Ignoring data point: Session was recently stopped');
       return false;
     }
     
@@ -172,15 +199,9 @@ export function useDataRecording({
         setIsRecording(true);
         setStartTime(Date.now());
       } else {
-        // No active session anywhere, start a new one
-        try {
-          console.log('No active session. Starting a default session...');
-          const defaultName = `Auto-Session-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-          await startRecording(defaultName);
-        } catch (error) {
-          console.error('Failed to auto-start session:', error);
-          return false;
-        }
+        // No active session - do NOT auto-start a new one
+        console.log('No active session and auto-start is disabled');
+        return false;
       }
     }
     
@@ -205,7 +226,7 @@ export function useDataRecording({
       console.error('Error adding data point:', error);
       return false;
     }
-  }, [isRecording, startRecording]);
+  }, [isRecording, recentlyStopped]);
   
   return {
     isRecording,

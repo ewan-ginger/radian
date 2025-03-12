@@ -27,6 +27,11 @@ export class SessionManager {
   private bufferSize: number = 50; // Number of data points to buffer before saving to database
   private lastFlushTime: number = 0;
   private flushInterval: number = 5000; // Flush buffer every 5 seconds
+  private firstTimestamp: number | null = null; // Track the first timestamp for normalization
+  private lastNormalizedTimestamp: number = 0; // Track the last normalized timestamp
+  private timestampInterval: number = 0.1; // Interval between normalized timestamps (seconds)
+  private isFlushingBuffer: boolean = false; // Track if we're currently flushing
+  private pendingBuffer: SensorDataInsert[] = []; // Buffer for data received during flush
   
   /**
    * Create a new SessionManager
@@ -42,7 +47,7 @@ export class SessionManager {
     this.playerId = playerId;
     this.bufferSize = bufferSize;
     this.flushInterval = flushInterval;
-    console.log(`SessionManager initialized with playerId: ${playerId}, bufferSize: ${bufferSize}, flushInterval: ${flushInterval}`);
+    console.log(`SessionManager initialized with bufferSize: ${bufferSize}, flushInterval: ${flushInterval}ms`);
   }
   
   /**
@@ -71,6 +76,10 @@ export class SessionManager {
       this.dataBuffer = [];
       this.lastFlushTime = Date.now();
       
+      // Reset timestamp normalization
+      this.firstTimestamp = null;
+      this.lastNormalizedTimestamp = 0;
+      
       console.log(`Started session with ID: ${this.sessionId}`);
       return this.sessionId;
     } catch (error) {
@@ -88,30 +97,88 @@ export class SessionManager {
       throw new Error('No session in progress');
     }
     
+    const sessionId = this.sessionId;
+    
     try {
-      // Flush any remaining data
-      console.log(`Flushing remaining data before ending session: ${this.dataBuffer.length} items`);
-      await this.flushBuffer();
-      
-      // End the session
-      console.log(`Ending session with ID: ${this.sessionId}`);
-      await endSession(this.sessionId);
-      
-      const sessionId = this.sessionId;
+      // Stop recording immediately to prevent new data from being added
       this.isRecording = false;
+      
+      // Flush any remaining data with retries
+      if (this.dataBuffer.length > 0) {
+        console.log(`Flushing ${this.dataBuffer.length} remaining data points before ending session`);
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        while (this.dataBuffer.length > 0 && retryCount < maxRetries) {
+          try {
+            await this.flushBuffer();
+            break; // If successful, exit the retry loop
+          } catch (flushError) {
+            console.error(`Flush attempt ${retryCount + 1} failed:`, flushError);
+            retryCount++;
+            if (retryCount === maxRetries) {
+              console.error('Max retry attempts reached for flushing data');
+            }
+            // Short delay before retry
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+      }
+      
+      // Update session end time
+      const sessionData: SessionUpdate = {
+        end_time: new Date().toISOString(),
+      };
+      
+      try {
+        await updateSession(sessionId, sessionData);
+      } catch (updateError) {
+        console.error('Failed to update session end time:', updateError);
+        // Continue with cleanup even if update fails
+      }
+      
+      // Clean up
       this.sessionId = null;
+      this.firstTimestamp = null;
+      this.lastNormalizedTimestamp = 0;
+      this.dataBuffer = []; // Clear any remaining data
       
       console.log(`Ended session with ID: ${sessionId}`);
       return sessionId;
     } catch (error) {
+      // Even if there's an error, try to clean up
+      this.sessionId = null;
+      this.firstTimestamp = null;
+      this.lastNormalizedTimestamp = 0;
+      this.dataBuffer = [];
+      
       console.error('Error ending session:', error);
       throw new Error(`Failed to end session: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
   /**
+   * Normalize a timestamp relative to the first timestamp in the session
+   * @param rawTimestamp Raw timestamp from the sensor
+   * @returns Normalized timestamp starting from 0 and incrementing by 0.1
+   */
+  private normalizeTimestamp(rawTimestamp: number): number {
+    // If this is the first timestamp in the session, set it as the baseline
+    if (this.firstTimestamp === null) {
+      this.firstTimestamp = rawTimestamp;
+      console.log(`Set first timestamp baseline to: ${this.firstTimestamp}`);
+      return 0;
+    }
+    
+    // Calculate the normalized timestamp based on sequence
+    // This ensures timestamps are always 0.1 seconds apart regardless of actual time
+    this.lastNormalizedTimestamp += this.timestampInterval;
+    return parseFloat(this.lastNormalizedTimestamp.toFixed(1)); // Ensure we have exactly one decimal place
+  }
+  
+  /**
    * Add sensor data to the current session
-   * @param data Raw sensor data array in the format [playerID, timestamp, battery, orientX, orientY, orientZ, accelX, accelY, accelZ, gyroX, gyroY, gyroZ, magX, magY, magZ]
+   * @param data Array of sensor data values
    * @returns True if data was added successfully
    */
   async addSensorData(data: number[]): Promise<boolean> {
@@ -133,7 +200,6 @@ export class SessionManager {
       // Ensure we have a valid player ID (must be a UUID for Supabase)
       let playerIdToUse: string | null = this.playerId;
       if (!playerIdToUse) {
-        // If no player ID is set, try to get the default player
         try {
           const players = await getAllPlayers();
           if (players && players.length > 0) {
@@ -149,17 +215,23 @@ export class SessionManager {
         }
       }
       
-      // If we still don't have a player ID, we can't proceed
       if (!playerIdToUse) {
         console.error('No valid player ID available');
         return false;
       }
       
+      // Get the raw timestamp from the data
+      const rawTimestamp = data[1] || Date.now();
+      
+      // Normalize the timestamp
+      const normalizedTimestamp = this.normalizeTimestamp(rawTimestamp);
+      console.log(`Normalized timestamp: ${rawTimestamp} -> ${normalizedTimestamp}`);
+      
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
-        session_id: this.sessionId!, // Use non-null assertion since we've already checked above
-        player_id: playerIdToUse, // Use the validated player ID
-        timestamp: data[1] ? Number(data[1]) : Date.now(), // Use provided timestamp or current time
+        session_id: this.sessionId!,
+        player_id: playerIdToUse,
+        timestamp: normalizedTimestamp,
         battery_level: data[2] || 0,
         orientation_x: data[3] || 0,
         orientation_y: data[4] || 0,
@@ -175,20 +247,25 @@ export class SessionManager {
         magnetometer_z: data[14] || 0
       };
       
-      console.log('Formatted sensor data:', JSON.stringify(sensorData, null, 2));
-      
-      // Add to buffer
-      this.dataBuffer.push(sensorData);
-      console.log(`Added data to buffer. Buffer size: ${this.dataBuffer.length}/${this.bufferSize}`);
-      
-      // Check if buffer should be flushed
-      const now = Date.now();
-      if (this.dataBuffer.length >= this.bufferSize || (now - this.lastFlushTime) >= this.flushInterval) {
-        console.log(`Buffer threshold reached. Flushing ${this.dataBuffer.length} items to database.`);
-        await this.flushBuffer();
+      // If we're currently flushing, add to pending buffer
+      if (this.isFlushingBuffer) {
+        this.pendingBuffer.push(sensorData);
+        console.log(`Added to pending buffer. Size: ${this.pendingBuffer.length}`);
+      } else {
+        this.dataBuffer.push(sensorData);
+        console.log(`Added to main buffer. Size: ${this.dataBuffer.length}/${this.bufferSize}`);
+        
+        // Check if buffer should be flushed
+        const now = Date.now();
+        if (this.dataBuffer.length >= this.bufferSize || (now - this.lastFlushTime) >= this.flushInterval) {
+          console.log(`Buffer threshold reached. Flushing ${this.dataBuffer.length} items to database.`);
+          // Don't await the flush - let it happen in the background
+          this.flushBuffer().catch(error => {
+            console.error('Error in background flush:', error);
+          });
+        }
       }
       
-      // Always return true if we successfully added the data to the buffer
       return true;
     } catch (error) {
       console.error('Error adding sensor data:', error);
@@ -201,67 +278,69 @@ export class SessionManager {
    * @returns True if buffer was flushed successfully
    */
   private async flushBuffer(): Promise<boolean> {
+    if (this.isFlushingBuffer) {
+      console.log('Flush already in progress, skipping');
+      return false;
+    }
+    
     if (this.dataBuffer.length === 0) {
       console.log('No data to flush');
       return true;
     }
     
+    this.isFlushingBuffer = true;
+    const dataToFlush = [...this.dataBuffer]; // Create a copy of the current buffer
+    this.dataBuffer = []; // Clear the main buffer
+    
     try {
-      console.log(`Flushing ${this.dataBuffer.length} data points to database`);
-      console.log('First item in buffer:', JSON.stringify(this.dataBuffer[0], null, 2));
+      console.log(`Flushing ${dataToFlush.length} data points to database`);
       
-      // Check if we have valid session and player IDs
-      if (!this.sessionId) {
-        console.error('Cannot flush buffer: No session ID');
-        return false;
+      // Process data in smaller chunks
+      const chunkSize = 10;
+      const chunks = [];
+      for (let i = 0; i < dataToFlush.length; i += chunkSize) {
+        chunks.push(dataToFlush.slice(i, i + chunkSize));
       }
       
-      if (!this.playerId) {
-        console.warn('Warning: No player ID set, using default from data');
-      }
+      let totalSuccess = 0;
       
-      // Insert the buffered data
-      try {
-        console.log('Attempting batch insertion with Supabase...');
-        await insertSensorDataBatch(this.dataBuffer);
-        console.log('Batch insertion successful!');
-      } catch (batchError) {
-        console.error('Batch insertion failed:', batchError);
-        
-        // Try inserting records one by one as a fallback
-        console.log('Attempting to insert records one by one...');
-        let successCount = 0;
-        
-        for (const record of this.dataBuffer) {
-          try {
-            console.log('Inserting single record:', JSON.stringify(record, null, 2));
-            await insertSensorData(record);
-            successCount++;
-            console.log(`Record ${successCount} inserted successfully`);
-          } catch (singleError) {
-            console.error('Failed to insert record:', singleError);
-            console.error('Record that failed:', JSON.stringify(record, null, 2));
+      for (const chunk of chunks) {
+        try {
+          console.log(`Attempting to insert chunk of ${chunk.length} records...`);
+          await insertSensorDataBatch(chunk);
+          totalSuccess += chunk.length;
+          console.log(`Successfully inserted chunk of ${chunk.length} records`);
+        } catch (chunkError) {
+          console.error('Chunk insertion failed:', chunkError);
+          
+          // Fall back to individual inserts for this chunk
+          for (const record of chunk) {
+            try {
+              await insertSensorData(record);
+              totalSuccess++;
+            } catch (singleError) {
+              console.error('Failed to insert individual record:', singleError);
+            }
           }
         }
-        
-        console.log(`Inserted ${successCount}/${this.dataBuffer.length} records individually.`);
-        
-        if (successCount === 0) {
-          console.error('All individual insertions failed');
-          return false;
-        }
       }
       
-      // Clear the buffer
-      const bufferSize = this.dataBuffer.length;
-      this.dataBuffer = [];
       this.lastFlushTime = Date.now();
       
-      console.log(`Data flushed successfully: ${bufferSize} records cleared from buffer`);
-      return true;
+      // After successful flush, move any pending data to the main buffer
+      if (this.pendingBuffer.length > 0) {
+        console.log(`Moving ${this.pendingBuffer.length} pending records to main buffer`);
+        this.dataBuffer = [...this.pendingBuffer];
+        this.pendingBuffer = [];
+      }
+      
+      console.log(`Data flush completed: ${totalSuccess} records inserted successfully`);
+      return totalSuccess > 0;
     } catch (error) {
       console.error('Error flushing data buffer:', error);
       return false;
+    } finally {
+      this.isFlushingBuffer = false;
     }
   }
   
