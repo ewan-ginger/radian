@@ -1,7 +1,7 @@
 import { 
   createSession, 
   updateSession, 
-  endSession, 
+  endSession as endSessionService, 
   getSessionById 
 } from '@/lib/services/session-service';
 import { 
@@ -125,15 +125,12 @@ export class SessionManager {
         }
       }
       
-      // Update session end time
-      const sessionData: SessionUpdate = {
-        end_time: new Date().toISOString(),
-      };
-      
+      // Use the endSession service function to update end time and calculate duration
       try {
-        await updateSession(sessionId, sessionData);
+        await endSessionService(sessionId);
+        console.log('Session ended with duration calculation');
       } catch (updateError) {
-        console.error('Failed to update session end time:', updateError);
+        console.error('Failed to update session end time and duration:', updateError);
         // Continue with cleanup even if update fails
       }
       
@@ -184,12 +181,18 @@ export class SessionManager {
   async addSensorData(data: number[]): Promise<boolean> {
     // Check if a session is in progress
     if (!this.isRecording || !this.sessionId) {
-      console.warn('Cannot add data: No session in progress');
+      console.warn('Cannot add data: No session in progress', { isRecording: this.isRecording, sessionId: this.sessionId });
       return false;
     }
     
     try {
-      console.log(`Adding sensor data to session ${this.sessionId}:`, data);
+      console.log(`Adding sensor data to session ${this.sessionId}:`, {
+        dataLength: data.length,
+        sessionId: this.sessionId,
+        playerId: this.playerId,
+        bufferSize: this.dataBuffer.length,
+        isFlushingBuffer: this.isFlushingBuffer
+      });
       
       // Ensure we have the correct number of values
       if (data.length < 15) {
@@ -229,7 +232,7 @@ export class SessionManager {
       
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
-        session_id: this.sessionId!,
+        session_id: this.sessionId,
         player_id: playerIdToUse,
         timestamp: normalizedTimestamp,
         battery_level: data[2] || 0,

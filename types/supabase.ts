@@ -35,6 +35,7 @@ export interface Database {
           name: string | null;
           start_time: string;
           end_time: string | null;
+          duration: string | null;
           created_at: string;
         };
         Insert: {
@@ -42,6 +43,7 @@ export interface Database {
           name?: string | null;
           start_time?: string;
           end_time?: string | null;
+          duration?: string | null;
           created_at?: string;
         };
         Update: {
@@ -49,6 +51,7 @@ export interface Database {
           name?: string | null;
           start_time?: string;
           end_time?: string | null;
+          duration?: string | null;
           created_at?: string;
         };
       };

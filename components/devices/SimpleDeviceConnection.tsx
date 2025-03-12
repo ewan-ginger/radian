@@ -9,6 +9,7 @@ import { useRecording } from '@/context/RecordingContext';
 import { formatDuration } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { checkSessionNameExists } from '@/lib/services/session-service';
 
 // Add Web Serial API type definitions
 declare global {
@@ -70,13 +71,33 @@ export function SimpleDeviceConnection() {
   }, []);
   
   // Validate session name
-  const validateSessionName = () => {
-    if (!sessionName.trim()) {
+  const validateSessionName = async () => {
+    const trimmedName = sessionName.trim();
+    if (!trimmedName) {
       setSessionNameError('Please enter a session name');
       return false;
     }
-    setSessionNameError('');
-    return true;
+
+    try {
+      console.log('Checking if session name exists:', trimmedName);
+      const exists = await checkSessionNameExists(trimmedName);
+      console.log('Session name exists?', exists);
+      
+      if (exists) {
+        console.log('Session name already exists, showing error');
+        setSessionNameError('A session with this name already exists');
+        return false;
+      }
+      
+      console.log('Session name is unique, proceeding');
+      setSessionNameError('');
+      return true;
+    } catch (error) {
+      console.error('Error checking session name:', error);
+      // Show a more user-friendly error message
+      setSessionNameError('Unable to validate session name. Please try a different name.');
+      return false;
+    }
   };
   
   async function connectSerial() {
@@ -236,7 +257,8 @@ export function SimpleDeviceConnection() {
     }
     
     // Validate session name
-    if (!validateSessionName()) {
+    const isValid = await validateSessionName();
+    if (!isValid) {
       return;
     }
     

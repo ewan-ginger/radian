@@ -92,16 +92,24 @@ export function useDataRecording({
   
   // Update recording duration
   useEffect(() => {
-    if (isRecording && startTime) {
+    if (isRecording) {
+      console.log('Starting duration counter');
+      const startTimeStamp = Date.now();
+      setStartTime(startTimeStamp);
+      
       durationIntervalRef.current = setInterval(() => {
-        const duration = Math.floor((Date.now() - startTime) / 1000);
+        const duration = Math.floor((Date.now() - startTimeStamp) / 1000);
+        console.log('Updating duration:', duration);
         setRecordingDuration(duration);
       }, 1000);
     } else {
+      console.log('Stopping duration counter');
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
         durationIntervalRef.current = null;
       }
+      setStartTime(null);
+      setRecordingDuration(0);
     }
     
     return () => {
@@ -110,7 +118,7 @@ export function useDataRecording({
         durationIntervalRef.current = null;
       }
     };
-  }, [isRecording, startTime]);
+  }, [isRecording]); // Only depend on isRecording state
   
   // Set player ID
   const setPlayer = useCallback((id: string) => {
@@ -132,9 +140,7 @@ export function useDataRecording({
       const id = await sessionManagerRef.current.startSession(sessionName);
       setSessionId(id);
       setIsRecording(true);
-      setStartTime(Date.now());
       setDataPoints(0);
-      setRecordingDuration(0);
       console.log('Recording session started with ID:', id);
       return true;
     } catch (error) {
@@ -197,7 +203,6 @@ export function useDataRecording({
         const sessionId = sessionManagerRef.current.getSessionId();
         setSessionId(sessionId);
         setIsRecording(true);
-        setStartTime(Date.now());
       } else {
         // No active session - do NOT auto-start a new one
         console.log('No active session and auto-start is disabled');

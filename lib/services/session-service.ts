@@ -47,11 +47,46 @@ export async function getSessionById(id: string): Promise<SessionEntity | null> 
 }
 
 /**
+ * Check if a session name already exists
+ * @param name Session name to check
+ * @returns True if the name exists, false otherwise
+ */
+export async function checkSessionNameExists(name: string): Promise<boolean> {
+  try {
+    // Get all sessions with this exact name
+    const { data, error } = await supabaseClient
+      .from(SESSIONS_TABLE)
+      .select('id')
+      .eq('name', name.trim())
+      .select();
+
+    if (error) {
+      console.error('Error checking session name:', error);
+      throw new Error(`Failed to check session name: ${error.message}`);
+    }
+
+    // Check if any sessions were found with this exact name
+    return Array.isArray(data) && data.length > 0;
+  } catch (error) {
+    console.error('Error checking session name:', error);
+    throw error;
+  }
+}
+
+/**
  * Create a new session
  * @param session Session data to insert
  * @returns The created session
  */
 export async function createSession(session: SessionInsert): Promise<Session> {
+  // Check if name already exists
+  if (session.name) {
+    const exists = await checkSessionNameExists(session.name);
+    if (exists) {
+      throw new Error(`Session name "${session.name}" already exists`);
+    }
+  }
+
   const { data, error } = await supabaseClient
     .from(SESSIONS_TABLE)
     .insert(session)
@@ -89,12 +124,55 @@ export async function updateSession(id: string, updates: SessionUpdate): Promise
 }
 
 /**
- * End a session by setting its end_time to the current time
+ * End a session by setting its end_time to the current time and calculating duration
  * @param id Session ID
  * @returns The updated session
  */
 export async function endSession(id: string): Promise<Session> {
-  return updateSession(id, { end_time: new Date().toISOString() });
+  // Get the session to calculate duration
+  const session = await getSessionById(id);
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  const endTime = new Date();
+  const startTime = new Date(session.start_time);
+  
+  // Calculate duration in seconds
+  const durationSeconds = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
+  
+  console.log('Ending session:', {
+    id,
+    startTime: startTime.toISOString(),
+    endTime: endTime.toISOString(),
+    durationSeconds
+  });
+  
+  // Use raw SQL to update both end_time and duration
+  const { data, error } = await supabaseClient.rpc('update_session_duration', {
+    session_id: id,
+    duration_seconds: durationSeconds
+  });
+
+  if (error) {
+    console.error(`Error updating session for ID ${id}:`, { error, durationSeconds });
+    
+    // Fall back to regular update without duration
+    console.log('Falling back to regular update without duration');
+    return updateSession(id, { 
+      end_time: endTime.toISOString()
+    });
+  }
+
+  console.log('Session updated successfully with duration');
+  
+  // Fetch the updated session
+  const updatedSession = await getSessionById(id);
+  if (!updatedSession) {
+    throw new Error('Failed to fetch updated session');
+  }
+
+  return updatedSession as Session;
 }
 
 /**
