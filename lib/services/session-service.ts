@@ -181,14 +181,26 @@ export async function endSession(id: string): Promise<Session> {
  * @returns True if successful
  */
 export async function deleteSession(id: string): Promise<boolean> {
-  const { error } = await supabaseClient
+  // First delete all sensor data records for this session
+  const { error: sensorDataError } = await supabaseClient
+    .from('sensor_data')
+    .delete()
+    .eq('session_id', id);
+
+  if (sensorDataError) {
+    console.error(`Error deleting sensor data for session ${id}:`, sensorDataError);
+    throw sensorDataError;
+  }
+
+  // Then delete the session
+  const { error: sessionError } = await supabaseClient
     .from(SESSIONS_TABLE)
     .delete()
     .eq('id', id);
 
-  if (error) {
-    console.error(`Error deleting session with ID ${id}:`, error);
-    throw new Error(`Failed to delete session: ${error.message}`);
+  if (sessionError) {
+    console.error(`Error deleting session with ID ${id}:`, sessionError);
+    throw sessionError;
   }
 
   return true;

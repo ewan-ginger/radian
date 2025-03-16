@@ -2,19 +2,86 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { PanelLeft, PanelRight, Plus, Activity } from 'lucide-react';
+import { PanelLeft, PanelRight, Plus, Activity, Search, Trash2, Edit2 } from 'lucide-react';
 import { useSessionData } from '@/hooks/useSessionData';
 import { formatDistanceToNow } from 'date-fns';
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { SupabaseStatusPill } from "@/components/ui/SupabaseStatusPill";
+import { Input } from "@/components/ui/input";
+import { deleteSession, updateSession } from '@/lib/services/session-service';
+import { toast } from "sonner";
 
 export function Sidebar() {
+  const router = useRouter();
   const [isOpen, setIsOpen] = useState(true);
-  const { sessions, isLoading } = useSessionData();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const { sessions, isLoading, fetchSessions } = useSessionData();
   const pathname = usePathname();
+
+  // Filter sessions based on search query
+  const filteredSessions = sessions?.filter(session => {
+    const searchLower = searchQuery.toLowerCase();
+    const sessionName = (session.name || `Session ${session.id.substring(0, 8)}`).toLowerCase();
+    return sessionName.includes(searchLower);
+  }) || [];
+
+  // Handle session deletion
+  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (confirm('Are you sure you want to delete this session? This action cannot be undone.')) {
+      try {
+        await deleteSession(sessionId);
+        await fetchSessions();
+        toast.success('Session deleted successfully');
+
+        // If we're on the deleted session's page, redirect to /devices
+        if (pathname.includes(sessionId)) {
+          router.push('/devices');
+        } else {
+          // Reload the current page to refresh all data
+          window.location.reload();
+        }
+      } catch (error) {
+        console.error('Error deleting session:', error);
+        toast.error('Failed to delete session');
+      }
+    }
+  };
+
+  // Handle session name edit
+  const handleEditClick = (e: React.MouseEvent, sessionId: string, currentName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEditingSessionId(sessionId);
+    setEditingName(currentName);
+  };
+
+  const handleNameSubmit = async (e: React.FormEvent, sessionId: string) => {
+    e.preventDefault();
+    if (!editingName.trim()) {
+      toast.error('Session name cannot be empty');
+      return;
+    }
+
+    try {
+      await updateSession(sessionId, { name: editingName.trim() });
+      await fetchSessions();
+      setEditingSessionId(null);
+      toast.success('Session name updated successfully');
+      // Reload the page to refresh all data
+      window.location.reload();
+    } catch (error) {
+      console.error('Error updating session name:', error);
+      toast.error('Failed to update session name');
+    }
+  };
 
   // Log sessions to see duration values
   useEffect(() => {
@@ -173,47 +240,95 @@ export function Sidebar() {
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">
             {isOpen && (
-              <h3 className="px-2 py-1 text-sm font-medium text-muted-foreground">Recent Sessions</h3>
+              <>
+                <h3 className="px-2 py-1 text-sm font-medium text-muted-foreground">Recent Sessions</h3>
+                <div className="px-2 py-1">
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search sessions..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                </div>
+              </>
             )}
             
             {isLoading ? (
               <div className="flex items-center justify-center py-8">
                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
               </div>
-            ) : sessions.length === 0 ? (
+            ) : filteredSessions.length === 0 ? (
               isOpen && (
                 <div className="px-2 py-4 text-sm text-muted-foreground text-center">
-                  No sessions found
+                  {searchQuery ? 'No matching sessions found' : 'No sessions found'}
                 </div>
               )
             ) : (
-              sessions.map((session) => {
+              filteredSessions.map((session) => {
+                const isEditing = editingSessionId === session.id;
+                const sessionName = session.name || `Session ${session.id.substring(0, 8)}`;
                 const isActive = pathname === `/sessions/${session.id}`;
+                
                 return (
-                  <Link 
-                    key={session.id} 
+                  <Link
+                    key={session.id}
                     href={`/sessions/${session.id}`}
-                    className={`block px-2 py-2 rounded-md text-sm transition-colors ${
-                      isActive 
-                        ? 'bg-primary/10 text-primary' 
-                        : 'hover:bg-muted'
+                    className={`relative group flex items-center justify-between p-2 hover:bg-accent rounded-md ${
+                      isActive ? 'bg-accent' : ''
                     }`}
                   >
                     {isOpen ? (
-                      <>
-                        <div className="font-medium truncate">
-                          {session.name || `Session ${session.id.substring(0, 8)}`}
-                        </div>
-                        <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                          <span>{formatDistanceToNow(new Date(session.start_time), { addSuffix: true })}</span>
-                          <span className="flex items-center">
-                            <Activity className="h-3 w-3 mr-1" />
-                            {calculateDuration(session)}
-                          </span>
-                        </div>
-                      </>
+                      <div className="flex-1 min-w-0">
+                        {isEditing ? (
+                          <form onSubmit={(e) => handleNameSubmit(e, session.id)} className="flex gap-2">
+                            <Input
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="h-8"
+                              autoFocus
+                            />
+                            <Button
+                              type="submit"
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Save
+                            </Button>
+                          </form>
+                        ) : (
+                          <>
+                            <div className="font-medium truncate">{sessionName}</div>
+                            <div className="text-sm text-muted-foreground">
+                              {formatDistanceToNow(new Date(session.start_time), { addSuffix: true })}
+                            </div>
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 top-1/2 -translate-y-1/2">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={(e) => handleEditClick(e, session.id, sessionName)}
+                              >
+                                <Edit2 className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive"
+                                onClick={(e) => handleDeleteSession(e, session.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     ) : (
-                      <div className="flex justify-center">
+                      <div className="flex justify-center w-full">
                         <Activity className={`h-5 w-5 ${isActive ? 'text-primary' : ''}`} />
                       </div>
                     )}

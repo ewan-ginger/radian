@@ -82,23 +82,41 @@ export function LiveDataGraph({ data, maxPoints = 100 }: LiveDataGraphProps) {
           </TabsList>
           
           <TabsContent value="orientation">
-            <div className="h-[400px] mt-4">
+            <div className="h-[500px] mt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={getTransformedData()}>
+                <LineChart 
+                  data={getTransformedData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="timestamp"
                     type="number"
                     domain={['dataMin', 'dataMax']}
                     tickFormatter={formatTimestamp}
-                    label={{ value: 'Time (s)', position: 'bottom' }}
+                    label={{ value: 'Time (s)', position: 'bottom', offset: 15 }}
                   />
-                  <YAxis label={{ value: 'Degrees', angle: -90, position: 'left' }} />
+                  <YAxis 
+                    label={{ 
+                      value: 'Degrees', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      offset: 10
+                    }}
+                    width={60}
+                  />
                   <Tooltip 
                     formatter={(value: number) => [value.toFixed(2), '']}
                     labelFormatter={formatTooltipTimestamp}
                   />
-                  <Legend />
+                  <Legend 
+                    verticalAlign="top"
+                    height={50}
+                    wrapperStyle={{
+                      paddingTop: '20px',
+                      paddingBottom: '20px'
+                    }}
+                  />
                   <Line type="monotone" dataKey="orientation_x" name="X" stroke="#8884d8" dot={false} />
                   <Line type="monotone" dataKey="orientation_y" name="Y" stroke="#82ca9d" dot={false} />
                   <Line type="monotone" dataKey="orientation_z" name="Z" stroke="#ffc658" dot={false} />
@@ -108,23 +126,41 @@ export function LiveDataGraph({ data, maxPoints = 100 }: LiveDataGraphProps) {
           </TabsContent>
           
           <TabsContent value="accelerometer">
-            <div className="h-[400px] mt-4">
+            <div className="h-[500px] mt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={getTransformedData()}>
+                <LineChart 
+                  data={getTransformedData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="timestamp"
                     type="number"
                     domain={['dataMin', 'dataMax']}
                     tickFormatter={formatTimestamp}
-                    label={{ value: 'Time (s)', position: 'bottom' }}
+                    label={{ value: 'Time (s)', position: 'bottom', offset: 15 }}
                   />
-                  <YAxis label={{ value: 'm/s²', angle: -90, position: 'left' }} />
+                  <YAxis 
+                    label={{ 
+                      value: 'm/s²', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      offset: 10
+                    }}
+                    width={60}
+                  />
                   <Tooltip 
                     formatter={(value: number) => [value.toFixed(2), '']}
                     labelFormatter={formatTooltipTimestamp}
                   />
-                  <Legend />
+                  <Legend 
+                    verticalAlign="top"
+                    height={50}
+                    wrapperStyle={{
+                      paddingTop: '20px',
+                      paddingBottom: '20px'
+                    }}
+                  />
                   <Line type="monotone" dataKey="accelerometer_x" name="X" stroke="#8884d8" dot={false} />
                   <Line type="monotone" dataKey="accelerometer_y" name="Y" stroke="#82ca9d" dot={false} />
                   <Line type="monotone" dataKey="accelerometer_z" name="Z" stroke="#ffc658" dot={false} />
@@ -134,23 +170,41 @@ export function LiveDataGraph({ data, maxPoints = 100 }: LiveDataGraphProps) {
           </TabsContent>
           
           <TabsContent value="gyroscope">
-            <div className="h-[400px] mt-4">
+            <div className="h-[500px] mt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={getTransformedData()}>
+                <LineChart 
+                  data={getTransformedData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="timestamp"
                     type="number"
                     domain={['dataMin', 'dataMax']}
                     tickFormatter={formatTimestamp}
-                    label={{ value: 'Time (s)', position: 'bottom' }}
+                    label={{ value: 'Time (s)', position: 'bottom', offset: 15 }}
                   />
-                  <YAxis label={{ value: '°/s', angle: -90, position: 'left' }} />
+                  <YAxis 
+                    label={{ 
+                      value: '°/s', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      offset: 10
+                    }}
+                    width={60}
+                  />
                   <Tooltip 
                     formatter={(value: number) => [value.toFixed(2), '']}
                     labelFormatter={formatTooltipTimestamp}
                   />
-                  <Legend />
+                  <Legend 
+                    verticalAlign="top"
+                    height={50}
+                    wrapperStyle={{
+                      paddingTop: '20px',
+                      paddingBottom: '20px'
+                    }}
+                  />
                   <Line type="monotone" dataKey="gyroscope_x" name="X" stroke="#8884d8" dot={false} />
                   <Line type="monotone" dataKey="gyroscope_y" name="Y" stroke="#82ca9d" dot={false} />
                   <Line type="monotone" dataKey="gyroscope_z" name="Z" stroke="#ffc658" dot={false} />
@@ -160,23 +214,41 @@ export function LiveDataGraph({ data, maxPoints = 100 }: LiveDataGraphProps) {
           </TabsContent>
           
           <TabsContent value="magnetometer">
-            <div className="h-[400px] mt-4">
+            <div className="h-[500px] mt-4">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={getTransformedData()}>
+                <LineChart 
+                  data={getTransformedData()}
+                  margin={{ top: 20, right: 30, left: 20, bottom: 40 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="timestamp"
                     type="number"
                     domain={['dataMin', 'dataMax']}
                     tickFormatter={formatTimestamp}
-                    label={{ value: 'Time (s)', position: 'bottom' }}
+                    label={{ value: 'Time (s)', position: 'bottom', offset: 15 }}
                   />
-                  <YAxis label={{ value: 'µT', angle: -90, position: 'left' }} />
+                  <YAxis 
+                    label={{ 
+                      value: 'µT', 
+                      angle: -90, 
+                      position: 'insideLeft',
+                      offset: 10
+                    }}
+                    width={60}
+                  />
                   <Tooltip 
                     formatter={(value: number) => [value.toFixed(2), '']}
                     labelFormatter={formatTooltipTimestamp}
                   />
-                  <Legend />
+                  <Legend 
+                    verticalAlign="top"
+                    height={50}
+                    wrapperStyle={{
+                      paddingTop: '20px',
+                      paddingBottom: '20px'
+                    }}
+                  />
                   <Line type="monotone" dataKey="magnetometer_x" name="X" stroke="#8884d8" dot={false} />
                   <Line type="monotone" dataKey="magnetometer_y" name="Y" stroke="#82ca9d" dot={false} />
                   <Line type="monotone" dataKey="magnetometer_z" name="Z" stroke="#ffc658" dot={false} />

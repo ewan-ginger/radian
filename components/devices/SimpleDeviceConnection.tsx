@@ -40,6 +40,7 @@ export function SimpleDeviceConnection() {
   const [sessionName, setSessionName] = useState('');
   const [sessionNameError, setSessionNameError] = useState('');
   const [isStopping, setIsStopping] = useState(false);
+  const [isRedirecting, setIsRedirecting] = useState(false);
   
   const { 
     isRecording, 
@@ -48,7 +49,8 @@ export function SimpleDeviceConnection() {
     startRecording, 
     stopRecording, 
     addDataPoint,
-    sessionId
+    sessionId,
+    sessionData
   } = useRecording();
   
   const portRef = useRef<SerialPort | null>(null);
@@ -316,46 +318,31 @@ export function SimpleDeviceConnection() {
     }
   }
   
-  async function handleStopStreaming() {
-    if (!isConnected) {
-      return;
-    }
-    
+  const handleStopStreaming = async () => {
     try {
-      // Set stopping flag to prevent processing new data
       setIsStopping(true);
+      setIsRedirecting(true);
       
-      // Send stop command to the device
-      await sendCommand('stop');
+      // Stop recording if it's active
+      if (isRecording) {
+        await stopRecording();
+      }
+      
+      // Stop streaming
       setIsStreaming(false);
       
-      // Wait a short moment to ensure any in-flight data is processed
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Wait for 5 seconds to ensure session is processed
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
-      // Stop recording session and get the session ID
-      console.log('Stopping recording session');
-      const stoppedSessionId = await stopRecording();
-      console.log('Recording stopped, session ID:', stoppedSessionId);
+      // Redirect to the session page or devices page
+      window.location.href = sessionId ? `/sessions/${sessionId}` : '/devices';
       
-      // Clear session name and parsed data
-      setSessionName('');
-      setParsedSensorData([]);
-      
-      // Reset stopping flag after a delay to ensure no new data is processed
-      setTimeout(() => {
-        setIsStopping(false);
-      }, 2000);
-
-      // Add a longer delay before redirecting to ensure the session is available
-      if (stoppedSessionId) {
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
-        router.push(`/sessions/${stoppedSessionId}`);
-      }
     } catch (error) {
-      console.error('Error stopping streaming:', error);
+      console.error('Error stopping session:', error);
+      setIsRedirecting(false);
       setIsStopping(false);
     }
-  }
+  };
   
   async function handleReset() {
     if (!isConnected) {
@@ -381,7 +368,12 @@ export function SimpleDeviceConnection() {
           </Badge>
         </CardHeader>
         <CardContent className="space-y-6">
-          {!isConnected ? (
+          {isRedirecting ? (
+            <div className="flex flex-col items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
+              <p className="text-sm text-muted-foreground">Saving session data...</p>
+            </div>
+          ) : !isConnected ? (
             <>
               <div className="flex items-center justify-center p-6">
                 <Usb className="h-16 w-16 text-muted-foreground" />
