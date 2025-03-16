@@ -10,6 +10,8 @@ import { formatDuration } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { checkSessionNameExists } from '@/lib/services/session-service';
+import { LiveDataGraph } from './LiveDataGraph';
+import { useRouter } from 'next/navigation';
 
 // Add Web Serial API type definitions
 declare global {
@@ -29,10 +31,12 @@ declare global {
 }
 
 export function SimpleDeviceConnection() {
+  const router = useRouter();
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [status, setStatus] = useState('Disconnected');
   const [sensorData, setSensorData] = useState<string[]>([]);
+  const [parsedSensorData, setParsedSensorData] = useState<any[]>([]);
   const [sessionName, setSessionName] = useState('');
   const [sessionNameError, setSessionNameError] = useState('');
   const [isStopping, setIsStopping] = useState(false);
@@ -212,6 +216,32 @@ export function SimpleDeviceConnection() {
                 if (values.length >= 15) {
                   console.log('Adding data point to recording with values:', values);
                   
+                  // Parse the data for visualization with correct column mapping
+                  // Order: playerID, timestamp, battery, orientationX, orientationY, orientationZ, 
+                  // accelerationX, accelerationY, accelerationZ, gyroX, gyroY, gyroZ, magX, magY, magZ
+                  const parsedData = {
+                    timestamp: values[1] || 0,      // timestamp is column 2
+                    orientation_x: values[3] || 0,   // orientation starts at column 4
+                    orientation_y: values[4] || 0,
+                    orientation_z: values[5] || 0,
+                    accelerometer_x: values[6] || 0, // acceleration starts at column 7
+                    accelerometer_y: values[7] || 0,
+                    accelerometer_z: values[8] || 0,
+                    gyroscope_x: values[9] || 0,    // gyroscope starts at column 10
+                    gyroscope_y: values[10] || 0,
+                    gyroscope_z: values[11] || 0,
+                    magnetometer_x: values[12] || 0, // magnetometer starts at column 13
+                    magnetometer_y: values[13] || 0,
+                    magnetometer_z: values[14] || 0,
+                  };
+                  
+                  // Update the parsed sensor data for the graph
+                  setParsedSensorData(prev => {
+                    const newData = [...prev, parsedData];
+                    // Keep only the last 100 data points for performance
+                    return newData.length > 100 ? newData.slice(-100) : newData;
+                  });
+                  
                   addDataPoint(values).then(result => {
                     console.log('Result of addDataPoint:', result);
                   }).catch(err => {
@@ -302,18 +332,25 @@ export function SimpleDeviceConnection() {
       // Wait a short moment to ensure any in-flight data is processed
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      // Stop recording session
+      // Stop recording session and get the session ID
       console.log('Stopping recording session');
-      await stopRecording();
-      console.log('Recording stopped');
+      const stoppedSessionId = await stopRecording();
+      console.log('Recording stopped, session ID:', stoppedSessionId);
       
-      // Clear session name
+      // Clear session name and parsed data
       setSessionName('');
+      setParsedSensorData([]);
       
       // Reset stopping flag after a delay to ensure no new data is processed
       setTimeout(() => {
         setIsStopping(false);
       }, 2000);
+
+      // Add a longer delay before redirecting to ensure the session is available
+      if (stoppedSessionId) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        router.push(`/sessions/${stoppedSessionId}`);
+      }
     } catch (error) {
       console.error('Error stopping streaming:', error);
       setIsStopping(false);
@@ -328,143 +365,151 @@ export function SimpleDeviceConnection() {
     try {
       await sendCommand('reset');
       setSensorData([]);
+      setParsedSensorData([]);
     } catch (error) {
       console.error('Error resetting device:', error);
     }
   }
   
   return (
-    <Card className="w-full">
-      <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Device Connection</CardTitle>
-        <Badge className={isConnected ? "bg-green-500" : "bg-red-500"}>
-          {status}
-        </Badge>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        {!isConnected ? (
-          <>
-            <div className="flex items-center justify-center p-6">
-              <Usb className="h-16 w-16 text-muted-foreground" />
-            </div>
-            <p className="text-center text-sm text-muted-foreground">
-              Connect your ESP32 device to start collecting data for the current session.
-            </p>
-            <div className="text-xs text-muted-foreground mb-4">
-              <p>Make sure your device is:</p>
-              <ul className="list-disc pl-5 mt-2">
-                <li>Plugged into your computer</li>
-                <li>Has the correct firmware installed</li>
-                <li>Not being used by another application</li>
-              </ul>
-            </div>
-            <Button 
-              className="w-full" 
-              onClick={connectSerial}
-            >
-              Connect Device
-            </Button>
-          </>
-        ) : (
-          <>
-            <div className="flex flex-col space-y-4">
-              {(isStreaming || isRecording) && (
-                <div className="bg-muted p-3 rounded-md">
-                  <div className="flex justify-between items-center">
-                    <div>
-                      <span className="text-sm font-medium">
-                        Recording Session: {sessionName || `Session ${sessionId?.substring(0, 8) || ''}`}
-                      </span>
-                      <div className="text-xs text-muted-foreground">
-                        Duration: {formatDuration(recordingDuration)}
+    <div className="h-[calc(100vh-65px)] flex items-center justify-center">
+      <Card className={`mx-auto ${isStreaming ? 'w-full' : 'w-1/2'}`}>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Device Connection</CardTitle>
+          <Badge className={isConnected ? "bg-green-500" : "bg-red-500"}>
+            {status}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {!isConnected ? (
+            <>
+              <div className="flex items-center justify-center p-6">
+                <Usb className="h-16 w-16 text-muted-foreground" />
+              </div>
+              <p className="text-center text-sm text-muted-foreground">
+                Connect your ESP32 device to start collecting data for the current session.
+              </p>
+              <div className="text-xs text-muted-foreground mb-4">
+                <p>Make sure your device is:</p>
+                <ul className="list-disc pl-5 mt-2">
+                  <li>Plugged into your computer</li>
+                  <li>Has the correct firmware installed</li>
+                  <li>Not being used by another application</li>
+                </ul>
+              </div>
+              <Button 
+                className="w-full" 
+                onClick={connectSerial}
+              >
+                Connect Device
+              </Button>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col space-y-4">
+                {(isStreaming || isRecording) && (
+                  <div className="bg-muted p-3 rounded-md">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className="text-sm font-medium">
+                          Recording Session: {sessionName || `Session ${sessionId?.substring(0, 8) || ''}`}
+                        </span>
+                        <div className="text-xs text-muted-foreground">
+                          Duration: {formatDuration(recordingDuration)}
+                        </div>
+                      </div>
+                      <div>
+                        <span className="text-xs text-muted-foreground">
+                          Data Points: {dataPoints}
+                        </span>
                       </div>
                     </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground">
-                        Data Points: {dataPoints}
-                      </span>
+                  </div>
+                )}
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="session-name">Session Name</Label>
+                    <Input 
+                      id="session-name" 
+                      value={sessionName} 
+                      onChange={(e) => setSessionName(e.target.value)}
+                      placeholder="Enter a name for this session"
+                      disabled={isStreaming || isRecording}
+                    />
+                    {sessionNameError && (
+                      <p className="text-xs text-destructive">{sessionNameError}</p>
+                    )}
+                  </div>
+                  
+                  <div>
+                    <h3 className="text-sm font-medium mb-2">Device Control</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {(isStreaming || isRecording) ? (
+                        <Button 
+                          variant="outline"
+                          className="flex items-center gap-2"
+                          onClick={handleStopStreaming}
+                        >
+                          <Pause className="h-4 w-4" />
+                          Stop Session
+                        </Button>
+                      ) : (
+                        <Button 
+                          className="flex items-center gap-2"
+                          onClick={handleStartStreaming}
+                          disabled={!sessionName.trim()}
+                        >
+                          <Play className="h-4 w-4" />
+                          Start Session
+                        </Button>
+                      )}
+                      
+                      <Button 
+                        variant="outline" 
+                        className="flex items-center gap-2"
+                        onClick={handleReset}
+                        disabled={isStreaming || isRecording}
+                      >
+                        <RefreshCw className="h-4 w-4" />
+                        Reset
+                      </Button>
+                      
+                      <Button 
+                        variant="outline" 
+                        className="flex items-center gap-2"
+                        onClick={disconnectSerial}
+                        disabled={isStreaming || isRecording}
+                      >
+                        <Usb className="h-4 w-4" />
+                        Disconnect
+                      </Button>
                     </div>
                   </div>
                 </div>
-              )}
-              
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="session-name">Session Name</Label>
-                  <Input 
-                    id="session-name" 
-                    value={sessionName} 
-                    onChange={(e) => setSessionName(e.target.value)}
-                    placeholder="Enter a name for this session"
-                    disabled={isStreaming || isRecording}
-                  />
-                  {sessionNameError && (
-                    <p className="text-xs text-destructive">{sessionNameError}</p>
-                  )}
-                </div>
                 
-                <div>
-                  <h3 className="text-sm font-medium mb-2">Device Control</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {(isStreaming || isRecording) ? (
-                      <Button 
-                        variant="outline"
-                        className="flex items-center gap-2"
-                        onClick={handleStopStreaming}
-                      >
-                        <Pause className="h-4 w-4" />
-                        Stop Session
-                      </Button>
+                {/* Live Data Graph */}
+                {parsedSensorData.length > 0 && (
+                  <LiveDataGraph data={parsedSensorData} maxPoints={100} />
+                )}
+                
+                <div className="mt-4">
+                  <h3 className="text-sm font-medium mb-2">Raw Sensor Data</h3>
+                  <div className="bg-muted p-2 rounded-md h-40 overflow-y-auto text-xs font-mono">
+                    {sensorData.length > 0 ? (
+                      sensorData.map((line, index) => (
+                        <div key={index} className="whitespace-pre-wrap">{line}</div>
+                      ))
                     ) : (
-                      <Button 
-                        className="flex items-center gap-2"
-                        onClick={handleStartStreaming}
-                        disabled={!sessionName.trim()}
-                      >
-                        <Play className="h-4 w-4" />
-                        Start Session
-                      </Button>
+                      <div className="text-muted-foreground">No data received yet</div>
                     )}
-                    
-                    <Button 
-                      variant="outline" 
-                      className="flex items-center gap-2"
-                      onClick={handleReset}
-                      disabled={isStreaming || isRecording}
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                      Reset
-                    </Button>
-                    
-                    <Button 
-                      variant="outline" 
-                      className="flex items-center gap-2"
-                      onClick={disconnectSerial}
-                      disabled={isStreaming || isRecording}
-                    >
-                      <Usb className="h-4 w-4" />
-                      Disconnect
-                    </Button>
                   </div>
                 </div>
               </div>
-              
-              <div className="mt-4">
-                <h3 className="text-sm font-medium mb-2">Sensor Data</h3>
-                <div className="bg-muted p-2 rounded-md h-40 overflow-y-auto text-xs font-mono">
-                  {sensorData.length > 0 ? (
-                    sensorData.map((line, index) => (
-                      <div key={index} className="whitespace-pre-wrap">{line}</div>
-                    ))
-                  ) : (
-                    <div className="text-muted-foreground">No data received yet</div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 } 

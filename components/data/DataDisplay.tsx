@@ -4,15 +4,18 @@ import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OrientationGraph } from './OrientationGraph';
+import { AccelerationGraph } from './AccelerationGraph';
+import { GyroscopeGraph } from './GyroscopeGraph';
+import { MagnetometerGraph } from './MagnetometerGraph';
 import { DataControls } from './DataControls';
 
 // Sample data generator for demonstration
 const generateSampleData = (count: number, noiseLevel = 5) => {
   const data = [];
-  const now = Date.now();
+  const startTime = 0;
   
   for (let i = 0; i < count; i++) {
-    const timestamp = now - (count - i) * 100; // 100ms intervals
+    const timestamp = startTime + i * 0.1; // 100ms intervals in seconds
     data.push({
       timestamp,
       x: Math.sin(i * 0.1) * 45 + (Math.random() - 0.5) * noiseLevel,
@@ -38,9 +41,15 @@ export function DataDisplay() {
   useEffect(() => {
     if (!isRecording) return;
     
+    // Convert timestamps to seconds for better x-axis display
+    const startTime = Date.now() / 1000;
+    
     const interval = setInterval(() => {
+      const currentTime = Date.now() / 1000;
+      const elapsedTime = currentTime - startTime;
+      
       const newPoint = {
-        timestamp: Date.now(),
+        timestamp: elapsedTime,
         x: Math.sin(Date.now() * 0.001) * 45 + (Math.random() - 0.5) * 5,
         y: Math.cos(Date.now() * 0.001) * 30 + (Math.random() - 0.5) * 5,
         z: Math.sin(Date.now() * 0.0005) * 15 + (Math.random() - 0.5) * 5,
@@ -123,15 +132,15 @@ export function DataDisplay() {
           </TabsContent>
           
           <TabsContent value="accelerometer">
-            <OrientationGraph 
+            <AccelerationGraph 
               data={accelerometerData} 
-              title="Accelerometer (g)" 
+              title="Accelerometer (m/s²)" 
               maxPoints={visiblePoints}
             />
           </TabsContent>
           
           <TabsContent value="gyroscope">
-            <OrientationGraph 
+            <GyroscopeGraph 
               data={gyroscopeData} 
               title="Gyroscope (deg/s)" 
               maxPoints={visiblePoints}
@@ -139,7 +148,7 @@ export function DataDisplay() {
           </TabsContent>
           
           <TabsContent value="magnetometer">
-            <OrientationGraph 
+            <MagnetometerGraph 
               data={magnetometerData} 
               title="Magnetometer (μT)" 
               maxPoints={visiblePoints}

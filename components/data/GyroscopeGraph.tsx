@@ -13,25 +13,25 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface OrientationData {
+interface GyroscopeData {
   timestamp: number;
   x: number;
   y: number;
   z: number;
 }
 
-interface OrientationGraphProps {
-  data: OrientationData[];
+interface GyroscopeGraphProps {
+  data: GyroscopeData[];
   title: string;
   maxPoints?: number;
 }
 
-export function OrientationGraph({ 
+export function GyroscopeGraph({ 
   data, 
   title, 
   maxPoints = 100 
-}: OrientationGraphProps) {
-  const [visibleData, setVisibleData] = useState<OrientationData[]>([]);
+}: GyroscopeGraphProps) {
+  const [visibleData, setVisibleData] = useState<GyroscopeData[]>([]);
 
   // Update visible data when data changes
   useEffect(() => {
@@ -90,11 +90,11 @@ export function OrientationGraph({
                 allowDataOverflow={false}
               />
               <YAxis 
-                label={{ value: 'Orientation (degrees)', angle: -90, position: 'insideLeft', offset: -15, dy: 50 }}
+                label={{ value: 'Angular Velocity (deg/s)', angle: -90, position: 'insideLeft', offset: -15, dy: 50 }}
                 width={60}
               />
               <Tooltip 
-                formatter={(value, name) => [`${value.toFixed(2)}°`, name]}
+                formatter={(value, name) => [`${value.toFixed(2)} deg/s`, name]}
                 labelFormatter={formatTooltipTimestamp}
               />
               <Legend />

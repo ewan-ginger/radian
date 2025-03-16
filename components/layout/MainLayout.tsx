@@ -1,7 +1,6 @@
 "use client";
 
-import { Header } from "./Header";
-import { Footer } from "./Footer";
+import { Sidebar } from "./Sidebar";
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -9,12 +8,11 @@ interface MainLayoutProps {
 
 export function MainLayout({ children }: MainLayoutProps) {
   return (
-    <div className="flex flex-col min-h-screen">
-      <Header />
-      <main className="flex-1 flex flex-col items-center justify-center">
+    <div className="flex h-screen">
+      <Sidebar />
+      <main className="flex-1 p-6 overflow-auto">
         {children}
       </main>
-      <Footer />
     </div>
   );
 } 

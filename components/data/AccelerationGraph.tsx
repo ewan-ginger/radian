@@ -13,25 +13,25 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface OrientationData {
+interface AccelerationData {
   timestamp: number;
   x: number;
   y: number;
   z: number;
 }
 
-interface OrientationGraphProps {
-  data: OrientationData[];
+interface AccelerationGraphProps {
+  data: AccelerationData[];
   title: string;
   maxPoints?: number;
 }
 
-export function OrientationGraph({ 
+export function AccelerationGraph({ 
   data, 
   title, 
   maxPoints = 100 
-}: OrientationGraphProps) {
-  const [visibleData, setVisibleData] = useState<OrientationData[]>([]);
+}: AccelerationGraphProps) {
+  const [visibleData, setVisibleData] = useState<AccelerationData[]>([]);
 
   // Update visible data when data changes
   useEffect(() => {
@@ -90,11 +90,11 @@ export function OrientationGraph({
                 allowDataOverflow={false}
               />
               <YAxis 
-                label={{ value: 'Orientation (degrees)', angle: -90, position: 'insideLeft', offset: -15, dy: 50 }}
+                label={{ value: 'Acceleration (m/s²)', angle: -90, position: 'insideLeft', offset: -15, dy: 50 }}
                 width={60}
               />
               <Tooltip 
-                formatter={(value, name) => [`${value.toFixed(2)}°`, name]}
+                formatter={(value, name) => [`${value.toFixed(2)} m/s²`, name]}
                 labelFormatter={formatTooltipTimestamp}
               />
               <Legend />
