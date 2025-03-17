@@ -319,17 +319,27 @@ export function SimpleDeviceConnection() {
   }
   
   const handleStopStreaming = async () => {
+    if (!isConnected) {
+      return;
+    }
+    
     try {
       setIsStopping(true);
       setIsRedirecting(true);
+      
+      // Send stop command to the device first
+      await sendCommand('stop');
       
       // Stop recording if it's active
       if (isRecording) {
         await stopRecording();
       }
       
-      // Stop streaming
+      // Stop streaming and clear data
       setIsStreaming(false);
+      setSensorData([]);
+      setParsedSensorData([]);
+      setSessionName('');
       
       // Wait for 5 seconds to ensure session is processed
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -358,9 +368,20 @@ export function SimpleDeviceConnection() {
     }
   }
   
+  // Reset all state when component mounts or when navigating to the page
+  useEffect(() => {
+    setIsStreaming(false);
+    setSensorData([]);
+    setParsedSensorData([]);
+    setSessionName('');
+    setSessionNameError('');
+    setIsStopping(false);
+    setIsRedirecting(false);
+  }, []);
+  
   return (
-    <div className="h-[calc(100vh-65px)] flex items-center justify-center">
-      <Card className={`mx-auto ${isStreaming ? 'w-full' : 'w-1/2'}`}>
+    <div className="h-[calc(100vh-65px)] flex items-center justify-center p-4">
+      <Card className={`mx-auto transition-all duration-300 ${isStreaming ? 'w-full' : 'max-w-md w-full'}`}>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Device Connection</CardTitle>
           <Badge className={isConnected ? "bg-green-500" : "bg-red-500"}>
@@ -397,108 +418,79 @@ export function SimpleDeviceConnection() {
               </Button>
             </>
           ) : (
-            <>
-              <div className="flex flex-col space-y-4">
-                {(isStreaming || isRecording) && (
-                  <div className="bg-muted p-3 rounded-md">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <span className="text-sm font-medium">
-                          Recording Session: {sessionName || `Session ${sessionId?.substring(0, 8) || ''}`}
-                        </span>
-                        <div className="text-xs text-muted-foreground">
-                          Duration: {formatDuration(recordingDuration)}
-                        </div>
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground">
-                          Data Points: {dataPoints}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                
+            <div className="space-y-6">
+              {!isStreaming && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="session-name">Session Name</Label>
-                    <Input 
-                      id="session-name" 
-                      value={sessionName} 
-                      onChange={(e) => setSessionName(e.target.value)}
+                    <Label htmlFor="sessionName">Session Name</Label>
+                    <Input
+                      id="sessionName"
+                      value={sessionName}
+                      onChange={(e) => {
+                        setSessionName(e.target.value);
+                        setSessionNameError('');
+                      }}
                       placeholder="Enter a name for this session"
-                      disabled={isStreaming || isRecording}
+                      className={sessionNameError ? 'border-red-500' : ''}
                     />
                     {sessionNameError && (
-                      <p className="text-xs text-destructive">{sessionNameError}</p>
+                      <p className="text-sm text-red-500">{sessionNameError}</p>
                     )}
                   </div>
-                  
-                  <div>
-                    <h3 className="text-sm font-medium mb-2">Device Control</h3>
-                    <div className="flex flex-wrap gap-2">
-                      {(isStreaming || isRecording) ? (
-                        <Button 
-                          variant="outline"
-                          className="flex items-center gap-2"
-                          onClick={handleStopStreaming}
-                        >
-                          <Pause className="h-4 w-4" />
-                          Stop Session
-                        </Button>
-                      ) : (
-                        <Button 
-                          className="flex items-center gap-2"
-                          onClick={handleStartStreaming}
-                          disabled={!sessionName.trim()}
-                        >
-                          <Play className="h-4 w-4" />
-                          Start Session
-                        </Button>
-                      )}
-                      
-                      <Button 
-                        variant="outline" 
-                        className="flex items-center gap-2"
-                        onClick={handleReset}
-                        disabled={isStreaming || isRecording}
+                  <div className="flex gap-2">
+                    <Button
+                      className="flex-1"
+                      onClick={handleStartStreaming}
+                      disabled={!sessionName.trim()}
+                    >
+                      <Play className="mr-2 h-4 w-4" />
+                      Start Session
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={disconnectSerial}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                </div>
+              )}
+              
+              {isStreaming && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-medium">{sessionName}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Duration: {formatDuration(recordingDuration)}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        Data Points: {dataPoints}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="destructive"
+                        onClick={handleStopStreaming}
+                        disabled={isStopping}
                       >
-                        <RefreshCw className="h-4 w-4" />
-                        Reset
+                        <Pause className="mr-2 h-4 w-4" />
+                        Stop Session
                       </Button>
-                      
-                      <Button 
-                        variant="outline" 
-                        className="flex items-center gap-2"
-                        onClick={disconnectSerial}
-                        disabled={isStreaming || isRecording}
+                      <Button
+                        variant="outline"
+                        onClick={handleReset}
                       >
-                        <Usb className="h-4 w-4" />
-                        Disconnect
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Reset
                       </Button>
                     </div>
                   </div>
-                </div>
-                
-                {/* Live Data Graph */}
-                {parsedSensorData.length > 0 && (
+                  
                   <LiveDataGraph data={parsedSensorData} maxPoints={100} />
-                )}
-                
-                <div className="mt-4">
-                  <h3 className="text-sm font-medium mb-2">Raw Sensor Data</h3>
-                  <div className="bg-muted p-2 rounded-md h-40 overflow-y-auto text-xs font-mono">
-                    {sensorData.length > 0 ? (
-                      sensorData.map((line, index) => (
-                        <div key={index} className="whitespace-pre-wrap">{line}</div>
-                      ))
-                    ) : (
-                      <div className="text-muted-foreground">No data received yet</div>
-                    )}
-                  </div>
                 </div>
-              </div>
-            </>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>
