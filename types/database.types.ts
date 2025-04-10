@@ -11,6 +11,9 @@ import { Player, Session, SensorData } from './supabase';
 export interface PlayerEntity extends Player {
   isActive?: boolean;
   lastSeen?: Date;
+  stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
+  position: 'attack' | 'midfield' | 'defense' | 'goalie';
+  strong_hand: 'left' | 'right';
 }
 
 // Session entity with additional application-specific properties

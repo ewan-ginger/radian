@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { PlayerEntity } from '@/types/database.types';
 import * as playerService from '@/lib/services/player-service';
+import { PlayerInsert, PlayerUpdate } from '@/types/supabase';
 
 export function usePlayerData() {
   const [players, setPlayers] = useState<PlayerEntity[]>([]);
@@ -27,13 +28,10 @@ export function usePlayerData() {
     fetchPlayers();
   }, [fetchPlayers]);
 
-  const createPlayer = useCallback(async (name: string, deviceId?: string) => {
+  const createPlayer = useCallback(async (playerData: PlayerInsert) => {
     try {
       setError(null);
-      const newPlayer = await playerService.createPlayer({
-        name,
-        device_id: deviceId,
-      });
+      const newPlayer = await playerService.createPlayer(playerData);
       setPlayers(prev => [...prev, newPlayer]);
       return newPlayer;
     } catch (err) {
@@ -43,13 +41,10 @@ export function usePlayerData() {
     }
   }, []);
 
-  const updatePlayer = useCallback(async (id: string, name: string, deviceId?: string) => {
+  const updatePlayer = useCallback(async (id: string, playerData: PlayerUpdate) => {
     try {
       setError(null);
-      const updatedPlayer = await playerService.updatePlayer(id, {
-        name,
-        device_id: deviceId,
-      });
+      const updatedPlayer = await playerService.updatePlayer(id, playerData);
       setPlayers(prev => prev.map(player => 
         player.id === id ? updatedPlayer : player
       ));

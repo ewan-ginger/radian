@@ -78,7 +78,10 @@ export async function getPlayerByDeviceId(deviceId: string): Promise<PlayerEntit
 export async function createPlayer(player: PlayerInsert): Promise<Player> {
   const { data, error } = await supabaseClient
     .from(PLAYERS_TABLE)
-    .insert(player)
+    .insert({
+      ...player,
+      updated_at: new Date().toISOString()
+    })
     .select()
     .single();
 
@@ -99,7 +102,10 @@ export async function createPlayer(player: PlayerInsert): Promise<Player> {
 export async function updatePlayer(id: string, updates: PlayerUpdate): Promise<Player> {
   const { data, error } = await supabaseClient
     .from(PLAYERS_TABLE)
-    .update(updates)
+    .update({
+      ...updates,
+      updated_at: new Date().toISOString()
+    })
     .eq('id', id)
     .select()
     .single();

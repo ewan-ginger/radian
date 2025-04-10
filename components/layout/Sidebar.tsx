@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { PanelLeft, PanelRight, Plus, Activity, Search, Trash2, Edit2 } from 'lucide-react';
+import { PanelLeft, PanelRight, Plus, Activity, Search, Trash2, Edit2, Users } from 'lucide-react';
 import { useSessionData } from '@/hooks/useSessionData';
 import { formatDistanceToNow } from 'date-fns';
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -232,6 +232,24 @@ export function Sidebar() {
               <Button size="icon" className="w-full">
                 <Plus className="h-4 w-4" />
               </Button>
+            </Link>
+          )}
+        </div>
+        
+        {/* Player Profiles Button */}
+        <div className="p-4 border-b">
+          {isOpen ? (
+            <Link href="/players">
+              <div className="w-full flex items-center px-3 py-2 text-sm font-medium rounded-md hover:bg-accent transition-colors">
+                <Users className="mr-2 h-4 w-4" />
+                Player Profiles
+              </div>
+            </Link>
+          ) : (
+            <Link href="/players">
+              <div className="w-full flex justify-center items-center p-2 rounded-md hover:bg-accent transition-colors">
+                <Users className="h-4 w-4" />
+              </div>
             </Link>
           )}
         </div>

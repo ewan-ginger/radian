@@ -2,12 +2,12 @@
  * Database schema definitions for the Radian Sports Analytics Dashboard
  * 
  * This file contains the SQL schema for the Supabase database tables:
- * - players: Stores information about players
+ * - player_profiles: Stores information about players
  * - sessions: Stores information about recording sessions
  * - sensor_data: Stores sensor readings from ESP32 devices
  */
 
-export const PLAYERS_TABLE = 'players';
+export const PLAYERS_TABLE = 'player_profiles';
 export const SESSIONS_TABLE = 'sessions';
 export const SENSOR_DATA_TABLE = 'sensor_data';
 
@@ -16,6 +16,10 @@ CREATE TABLE ${PLAYERS_TABLE} (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   name TEXT NOT NULL,
   device_id TEXT,
+  stick_type TEXT NOT NULL,
+  position TEXT NOT NULL,
+  strong_hand TEXT NOT NULL,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 `;
@@ -55,7 +59,7 @@ CREATE TABLE ${SENSOR_DATA_TABLE} (
 `;
 
 export const insertDefaultPlayerSQL = `
-INSERT INTO ${PLAYERS_TABLE} (name, device_id) VALUES ('Player 1', '1');
+INSERT INTO ${PLAYERS_TABLE} (name, device_id, stick_type, position, strong_hand) VALUES ('Player 1', '1', 'short-stick', 'midfield', 'right');
 `;
 
 // Complete SQL script to create all tables

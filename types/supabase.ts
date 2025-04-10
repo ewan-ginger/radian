@@ -15,18 +15,30 @@ export interface Database {
           name: string;
           device_id: string | null;
           created_at: string;
+          stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
+          position: 'attack' | 'midfield' | 'defense' | 'goalie';
+          strong_hand: 'left' | 'right';
+          updated_at: string;
         };
         Insert: {
           id?: string;
           name: string;
           device_id?: string | null;
           created_at?: string;
+          stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
+          position: 'attack' | 'midfield' | 'defense' | 'goalie';
+          strong_hand: 'left' | 'right';
+          updated_at?: string;
         };
         Update: {
           id?: string;
           name?: string;
           device_id?: string | null;
           created_at?: string;
+          stick_type?: 'short-stick' | 'long-stick' | 'goalie-stick';
+          position?: 'attack' | 'midfield' | 'defense' | 'goalie';
+          strong_hand?: 'left' | 'right';
+          updated_at?: string;
         };
       };
       sessions: {
