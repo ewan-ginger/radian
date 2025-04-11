@@ -1,25 +1,77 @@
 import { supabaseClient } from '@/lib/supabase/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { SESSIONS_TABLE, PLAYERS_TABLE, SENSOR_DATA_TABLE } from '@/lib/supabase/schema';
-import { Session, SessionInsert, SessionUpdate } from '@/types/supabase';
-import { SessionEntity, SessionSummary } from '@/types/database.types';
+import { SESSIONS_TABLE, SENSOR_DATA_TABLE, SESSION_PLAYERS_TABLE } from '@/lib/supabase/schema';
+import { Session, SessionInsert, SessionUpdate, SessionPlayerInsert } from '@/types/supabase';
+import { SessionEntity, SessionSummary, SessionType } from '@/types/database.types';
+import { addSessionPlayer } from './session-player-service';
 
 /**
  * Get all sessions
  * @returns Array of sessions
  */
 export async function getAllSessions(): Promise<SessionEntity[]> {
-  const { data, error } = await supabaseClient
-    .from(SESSIONS_TABLE)
-    .select('*')
-    .order('start_time', { ascending: false });
+  try {
+    // First get all sessions
+    const { data: sessions, error } = await supabaseClient
+      .from(SESSIONS_TABLE)
+      .select('*')
+      .order('start_time', { ascending: false });
 
-  if (error) {
-    console.error('Error fetching sessions:', error);
-    throw new Error(`Failed to fetch sessions: ${error.message}`);
+    if (error) {
+      console.error('Error fetching sessions:', error);
+      throw new Error(`Failed to fetch sessions: ${error.message}`);
+    }
+
+    // Then get all session players with player names
+    const { data: sessionPlayers, error: playersError } = await supabaseClient
+      .from(SESSION_PLAYERS_TABLE)
+      .select(`
+        session_id,
+        player_id,
+        device_id,
+        player_profiles:player_id(name)
+      `);
+
+    if (playersError) {
+      console.error('Error fetching session players:', playersError);
+      // Continue with sessions but without player data
+    }
+
+    // Create a map of session_id to players
+    const sessionPlayersMap = new Map<string, { player_id: string, name: string }[]>();
+    
+    if (sessionPlayers) {
+      sessionPlayers.forEach(sp => {
+        if (!sessionPlayersMap.has(sp.session_id)) {
+          sessionPlayersMap.set(sp.session_id, []);
+        }
+        
+        if (sp.player_profiles?.name) {
+          sessionPlayersMap.get(sp.session_id)?.push({
+            player_id: sp.player_id,
+            name: sp.player_profiles.name
+          });
+        }
+      });
+    }
+
+    // Add player data to sessions
+    const sessionsWithPlayers = sessions.map(session => {
+      const players = sessionPlayersMap.get(session.id) || [];
+      return {
+        ...session,
+        players: players.map(p => ({
+          player_id: p.player_id,
+          playerName: p.name
+        }))
+      };
+    });
+
+    return sessionsWithPlayers;
+  } catch (error) {
+    console.error('Error in getAllSessions:', error);
+    throw error;
   }
-
-  return data || [];
 }
 
 /**
@@ -53,18 +105,21 @@ export async function getSessionById(id: string): Promise<SessionEntity | null> 
  */
 export async function checkSessionNameExists(name: string): Promise<boolean> {
   try {
+    console.log(`Checking if session name exists: "${name}"`);
+    
     // Get all sessions with this exact name
     const { data, error } = await supabaseClient
       .from(SESSIONS_TABLE)
       .select('id')
-      .eq('name', name.trim())
-      .select();
+      .eq('name', name.trim());
 
     if (error) {
       console.error('Error checking session name:', error);
       throw new Error(`Failed to check session name: ${error.message}`);
     }
 
+    console.log(`Found ${data?.length || 0} sessions with name "${name}"`);
+    
     // Check if any sessions were found with this exact name
     return Array.isArray(data) && data.length > 0;
   } catch (error) {
@@ -76,11 +131,12 @@ export async function checkSessionNameExists(name: string): Promise<boolean> {
 /**
  * Create a new session
  * @param session Session data to insert
+ * @param skipNameCheck If true, skips checking if the session name already exists
  * @returns The created session
  */
-export async function createSession(session: SessionInsert): Promise<Session> {
+export async function createSession(session: SessionInsert, skipNameCheck = false): Promise<Session> {
   // Check if name already exists
-  if (session.name) {
+  if (session.name && !skipNameCheck) {
     const exists = await checkSessionNameExists(session.name);
     if (exists) {
       throw new Error(`Session name "${session.name}" already exists`);
@@ -207,7 +263,7 @@ export async function deleteSession(id: string): Promise<boolean> {
 }
 
 /**
- * Get session summary with player information and data point counts
+ * Get session summary with device information and data point counts
  * @param sessionId Session ID
  * @returns Session summary or null if not found
  */
@@ -219,16 +275,10 @@ export async function getSessionSummary(sessionId: string): Promise<SessionSumma
     return null;
   }
   
-  // Get data points count and player information
+  // Get data points count grouped by device
   const { data: sensorData, error: sensorError } = await supabaseClient
     .from(SENSOR_DATA_TABLE)
-    .select(`
-      player_id,
-      players:player_id (
-        id,
-        name
-      )
-    `)
+    .select('device_id')
     .eq('session_id', sessionId);
   
   if (sensorError) {
@@ -236,19 +286,47 @@ export async function getSessionSummary(sessionId: string): Promise<SessionSumma
     throw new Error(`Failed to fetch session summary: ${sensorError.message}`);
   }
   
-  // Count data points per player
-  const playerMap = new Map<string, { playerId: string, playerName: string, dataPoints: number }>();
+  // Get session players information
+  const { data: sessionPlayers, error: sessionPlayersError } = await supabaseClient
+    .from(SESSION_PLAYERS_TABLE)
+    .select(`
+      player_id,
+      device_id,
+      player_profiles:player_id(name)
+    `)
+    .eq('session_id', sessionId);
+    
+  if (sessionPlayersError) {
+    console.error(`Error fetching session players for session ${sessionId}:`, sessionPlayersError);
+  }
+  
+  // Create a map of device_id to player name
+  const deviceToPlayerMap = new Map<string, string>();
+  const playerNames: string[] = [];
+  
+  sessionPlayers?.forEach(sp => {
+    if (sp.device_id && sp.player_profiles?.name) {
+      deviceToPlayerMap.set(sp.device_id, sp.player_profiles.name);
+      // Add player name to array if not already there
+      if (sp.player_profiles.name && !playerNames.includes(sp.player_profiles.name)) {
+        playerNames.push(sp.player_profiles.name);
+      }
+    }
+  });
+  
+  // Count data points per device
+  const deviceMap = new Map<string, { deviceId: string, playerName: string, dataPoints: number }>();
   
   sensorData.forEach(data => {
-    const playerId = data.player_id;
-    const playerName = data.players?.name || 'Unknown Player';
+    const deviceId = data.device_id || 'unknown';
+    const playerName = deviceToPlayerMap.get(deviceId) || 'Unknown Player';
     
-    if (!playerMap.has(playerId)) {
-      playerMap.set(playerId, { playerId, playerName, dataPoints: 0 });
+    if (!deviceMap.has(deviceId)) {
+      deviceMap.set(deviceId, { deviceId, playerName, dataPoints: 0 });
     }
     
-    const playerData = playerMap.get(playerId)!;
-    playerData.dataPoints += 1;
+    const deviceData = deviceMap.get(deviceId)!;
+    deviceData.dataPoints += 1;
   });
   
   // Calculate duration
@@ -262,7 +340,9 @@ export async function getSessionSummary(sessionId: string): Promise<SessionSumma
     startTime,
     endTime: session.end_time ? new Date(session.end_time) : undefined,
     duration,
-    players: Array.from(playerMap.values()),
+    sessionType: session.session_type,
+    devices: Array.from(deviceMap.values()),
+    players: playerNames,
     dataPointsCount: sensorData.length,
   };
 }
@@ -285,4 +365,50 @@ export async function getAllSessionsServer(): Promise<SessionEntity[]> {
   }
 
   return data || [];
+}
+
+/**
+ * Create a new session with player-device mapping
+ * @param sessionData Session data to insert
+ * @param playerId Player profile ID to link to this session
+ * @param deviceId Device ID to use for this player
+ * @param skipNameCheck If true, skips checking if the session name already exists
+ * @returns The created session
+ */
+export async function createSessionWithPlayerDevice(
+  sessionData: {
+    name?: string | null;
+    session_type: SessionType;
+  },
+  playerId: string,
+  deviceId: string,
+  skipNameCheck = false
+): Promise<Session> {
+  // Start a transaction to create both the session and player mapping
+  try {
+    // 1. Create the session
+    const sessionInsert: SessionInsert = {
+      name: sessionData.name,
+      start_time: new Date().toISOString(),
+      session_type: sessionData.session_type
+    };
+    
+    console.log('Creating session with data:', sessionInsert);
+    const session = await createSession(sessionInsert, skipNameCheck);
+    
+    // 2. Create the player-device mapping
+    const sessionPlayerInsert: SessionPlayerInsert = {
+      session_id: session.id,
+      player_id: playerId,
+      device_id: deviceId
+    };
+    
+    console.log('Creating session-player mapping:', sessionPlayerInsert);
+    await addSessionPlayer(sessionPlayerInsert);
+    
+    return session;
+  } catch (error) {
+    console.error('Error creating session with player-device mapping:', error);
+    throw new Error(`Failed to create session with player-device mapping: ${error instanceof Error ? error.message : String(error)}`);
+  }
 } 

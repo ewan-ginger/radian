@@ -324,6 +324,22 @@ export function Sidebar() {
                             <div className="text-sm text-muted-foreground">
                               {formatDistanceToNow(new Date(session.start_time), { addSuffix: true })}
                             </div>
+                            {session.session_type && (
+                              <div className="text-xs text-muted-foreground flex items-center mt-1">
+                                <Activity className="h-3 w-3 mr-1" />
+                                {session.session_type.replace(/_/g, ' ')}
+                              </div>
+                            )}
+                            
+                            {session.players && session.players.length > 0 && (
+                              <div className="text-xs text-muted-foreground flex items-center mt-1">
+                                <Users className="h-3 w-3 mr-1" />
+                                {session.players.length === 1 
+                                  ? session.players[0].playerName 
+                                  : `${session.players.length} players`
+                                }
+                              </div>
+                            )}
                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 top-1/2 -translate-y-1/2">
                               <Button
                                 variant="ghost"

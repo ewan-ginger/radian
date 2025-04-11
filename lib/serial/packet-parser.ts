@@ -8,13 +8,13 @@ import { createDataMessage, parseSensorData } from './serial-protocol';
  * Packet format for ESP32 sensor data
  * 
  * Each packet contains 15 values:
- * 0: timestamp (ms since device boot)
- * 1-3: accelerometer (x, y, z) in m/s²
- * 4-6: gyroscope (x, y, z) in rad/s
- * 7-9: magnetometer (x, y, z) in μT
- * 10-12: orientation (x, y, z) in degrees
- * 13: battery level (percentage)
- * 14: reserved for future use
+ * 0: device ID (unique identifier for the sensor device)
+ * 1: timestamp (ms since device boot)
+ * 2-4: accelerometer (x, y, z) in m/s²
+ * 5-7: gyroscope (x, y, z) in rad/s
+ * 8-10: magnetometer (x, y, z) in μT
+ * 11-13: orientation (x, y, z) in degrees
+ * 14: battery level (percentage)
  */
 
 // Constants for packet parsing
@@ -56,19 +56,17 @@ export function parseDataPacket(buffer: Uint8Array): DataMessage | null {
  * Convert a data message to a sensor data insert object
  * @param message Data message
  * @param sessionId Session ID
- * @param playerId Player ID
  * @returns Sensor data insert object
  */
 export function dataMessageToSensorData(
   message: DataMessage,
   sessionId: string,
-  playerId: string
 ): SensorDataInsert {
   const sensorData = parseSensorData(message);
   
   return {
     session_id: sessionId,
-    player_id: playerId,
+    device_id: sensorData.deviceID,
     timestamp: sensorData.timestamp,
     accelerometer_x: sensorData.accelerometer_x,
     accelerometer_y: sensorData.accelerometer_y,

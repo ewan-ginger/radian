@@ -89,6 +89,42 @@ export class SessionManager {
   }
   
   /**
+   * Use an existing session instead of creating a new one
+   * @param sessionId The ID of an existing session
+   * @returns The session ID
+   */
+  async useExistingSession(sessionId: string): Promise<string> {
+    if (this.isRecording) {
+      throw new Error('Session already in progress');
+    }
+    
+    try {
+      console.log(`Using existing session with ID: ${sessionId}`);
+      
+      // Verify the session exists
+      const session = await getSessionById(sessionId);
+      if (!session) {
+        throw new Error(`Session with ID ${sessionId} not found`);
+      }
+      
+      this.sessionId = sessionId;
+      this.isRecording = true;
+      this.dataBuffer = [];
+      this.lastFlushTime = Date.now();
+      
+      // Reset timestamp normalization
+      this.firstTimestamp = null;
+      this.lastNormalizedTimestamp = 0;
+      
+      console.log(`Using existing session with ID: ${this.sessionId}`);
+      return this.sessionId;
+    } catch (error) {
+      console.error('Error using existing session:', error);
+      throw new Error(`Failed to use existing session: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  
+  /**
    * End the current recording session
    * @returns Session ID
    */
@@ -233,7 +269,7 @@ export class SessionManager {
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
         session_id: this.sessionId,
-        player_id: playerIdToUse,
+        device_id: data[0] || 0,
         timestamp: normalizedTimestamp,
         battery_level: data[2] || 0,
         orientation_x: data[3] || 0,

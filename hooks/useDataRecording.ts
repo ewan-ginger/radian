@@ -18,7 +18,7 @@ interface UseDataRecordingResult {
   players: PlayerEntity[];
   recordingDuration: number;
   dataPoints: number;
-  startRecording: (sessionName?: string) => Promise<boolean>;
+  startRecording: (sessionName?: string, existingSessionId?: string) => Promise<boolean>;
   stopRecording: () => Promise<boolean>;
   setPlayer: (playerId: string) => void;
   addDataPoint: (data: number[]) => Promise<boolean>;
@@ -129,15 +129,23 @@ export function useDataRecording({
   }, []);
   
   // Start recording
-  const startRecording = useCallback(async (sessionName?: string): Promise<boolean> => {
+  const startRecording = useCallback(async (sessionName?: string, existingSessionId?: string): Promise<boolean> => {
     if (!sessionManagerRef.current) {
       console.error('Session manager not initialized');
       return false;
     }
     
     try {
-      console.log('Starting recording session with name:', sessionName);
-      const id = await sessionManagerRef.current.startSession(sessionName);
+      let id: string;
+      
+      if (existingSessionId) {
+        console.log('Using existing session with ID:', existingSessionId);
+        id = await sessionManagerRef.current.useExistingSession(existingSessionId);
+      } else {
+        console.log('Starting recording session with name:', sessionName);
+        id = await sessionManagerRef.current.startSession(sessionName);
+      }
+      
       setSessionId(id);
       setIsRecording(true);
       setDataPoints(0);

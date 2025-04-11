@@ -214,29 +214,32 @@ export function createDataMessage(values: number[]): DataMessage {
  * @param dataMessage Data message
  * @returns Object containing sensor values
  */
-export function parseSensorData(dataMessage: DataMessage): Record<string, number> {
+export function parseSensorData(dataMessage: DataMessage): Record<string, any> {
   const values = dataMessage.payload;
   
-  // Expected format: [timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, orient_x, orient_y, orient_z, battery, reserved]
+  // Expected format: [device_id, timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z, orient_x, orient_y, orient_z, battery]
   if (values.length !== 15) {
     throw new Error(`Invalid sensor data: expected 15 values, got ${values.length}`);
   }
   
+  // Convert the device ID to a string as required by the database
+  const deviceId = values[0].toString();
+  
   return {
-    timestamp: values[0],
-    accelerometer_x: values[1],
-    accelerometer_y: values[2],
-    accelerometer_z: values[3],
-    gyroscope_x: values[4],
-    gyroscope_y: values[5],
-    gyroscope_z: values[6],
-    magnetometer_x: values[7],
-    magnetometer_y: values[8],
-    magnetometer_z: values[9],
-    orientation_x: values[10],
-    orientation_y: values[11],
-    orientation_z: values[12],
-    battery_level: values[13],
-    // values[14] is reserved for future use
+    deviceID: deviceId,
+    timestamp: values[1],
+    accelerometer_x: values[2],
+    accelerometer_y: values[3],
+    accelerometer_z: values[4],
+    gyroscope_x: values[5],
+    gyroscope_y: values[6],
+    gyroscope_z: values[7],
+    magnetometer_x: values[8],
+    magnetometer_y: values[9],
+    magnetometer_z: values[10],
+    orientation_x: values[11],
+    orientation_y: values[12],
+    orientation_z: values[13],
+    battery_level: values[14]
   };
 } 

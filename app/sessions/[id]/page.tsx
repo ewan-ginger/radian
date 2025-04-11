@@ -275,12 +275,33 @@ export default function SessionDetailPage() {
               {formatDuration(session.duration)}
             </Badge>
             {summary && (
-              <Badge variant="outline" className="flex items-center gap-1">
-                <Database className="h-3 w-3" />
-                {summary.dataPointsCount} data points
-              </Badge>
+              <>
+                <Badge variant="outline" className="flex items-center gap-1">
+                  <Database className="h-3 w-3" />
+                  {summary.dataPointsCount} data points
+                </Badge>
+                {summary.sessionType && (
+                  <Badge variant="outline" className="flex items-center gap-1">
+                    <Activity className="h-3 w-3" />
+                    {summary.sessionType.replace(/_/g, ' ')}
+                  </Badge>
+                )}
+              </>
             )}
           </div>
+          
+          {summary && summary.players && summary.players.length > 0 && (
+            <div className="mt-2">
+              <h3 className="text-sm font-medium text-muted-foreground">Players:</h3>
+              <div className="flex flex-wrap gap-2 mt-1">
+                {summary.players.map((player, index) => (
+                  <Badge key={index} variant="secondary">
+                    {player}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         
         <Card className="w-full">

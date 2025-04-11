@@ -481,7 +481,7 @@ export class SerialConnection {
               // Convert to SensorDataInsert format for database
               const dataForDb = {
                 session_id: '', // This would be set by the recording service
-                player_id: this.deviceInfo?.deviceId || '',
+                device_id: sensorData.deviceID,
                 timestamp: sensorData.timestamp,
                 accelerometer_x: sensorData.accelerometer_x,
                 accelerometer_y: sensorData.accelerometer_y,

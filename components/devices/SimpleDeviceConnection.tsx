@@ -9,24 +9,54 @@ import { useRecording } from '@/context/RecordingContext';
 import { formatDuration } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { checkSessionNameExists } from '@/lib/services/session-service';
+import { checkSessionNameExists, createSessionWithPlayerDevice } from '@/lib/services/session-service';
 import { LiveDataGraph } from './LiveDataGraph';
 import { useRouter } from 'next/navigation';
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from '@/components/ui/select';
+import { usePlayerData } from '@/hooks/usePlayerData';
+import { SessionType } from '@/types/database.types';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Spinner } from '@/components/ui/spinner';
 
-// Add Web Serial API type definitions
+// Simple Alert component since we don't have a dedicated alert component
+const Alert = ({ className, children }: { className?: string, children: React.ReactNode }) => {
+  return (
+    <div className={`p-3 border rounded bg-yellow-50 text-yellow-800 ${className || ''}`}>
+      {children}
+    </div>
+  );
+};
+
+const AlertDescription = ({ children }: { children: React.ReactNode }) => {
+  return <div className="text-sm">{children}</div>;
+};
+
+// Simple spinner component since we don't have a dedicated spinner component
+const Spinner = ({ size = "md" }: { size?: "sm" | "md" | "lg" }) => {
+  const sizeClass = {
+    sm: "h-4 w-4",
+    md: "h-8 w-8",
+    lg: "h-12 w-12"
+  }[size];
+  
+  return (
+    <div className={`animate-spin rounded-full border-t-2 border-blue-500 ${sizeClass}`}></div>
+  );
+};
+
+// Need to declare the window.navigator interface for TypeScript
 declare global {
   interface Navigator {
-    serial: {
-      requestPort(options?: {}): Promise<SerialPort>;
-      getPorts(): Promise<SerialPort[]>;
+    serial?: {
+      requestPort: (options?: any) => Promise<any>;
+      getPorts: () => Promise<any[]>;
     };
-  }
-  
-  interface SerialPort {
-    open(options: { baudRate: number }): Promise<void>;
-    close(): Promise<void>;
-    readable: ReadableStream<Uint8Array>;
-    writable: WritableStream<Uint8Array>;
   }
 }
 
@@ -41,6 +71,10 @@ export function SimpleDeviceConnection() {
   const [sessionNameError, setSessionNameError] = useState('');
   const [isStopping, setIsStopping] = useState(false);
   const [isRedirecting, setIsRedirecting] = useState(false);
+  const [sessionType, setSessionType] = useState<SessionType>('solo');
+  const [deviceId, setDeviceId] = useState<string>('1');
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string>('');
+  const [playerSelectionError, setPlayerSelectionError] = useState<string>('');
   
   const { 
     isRecording, 
@@ -53,10 +87,13 @@ export function SimpleDeviceConnection() {
     sessionData
   } = useRecording();
   
-  const portRef = useRef<SerialPort | null>(null);
+  const portRef = useRef<any | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const writerRef = useRef<WritableStreamDefaultWriter<Uint8Array> | null>(null);
   const readLoopRef = useRef<boolean>(false);
+  
+  // Get player data
+  const { players, isLoading: playersLoading } = usePlayerData();
   
   // Sync isStreaming with isRecording
   useEffect(() => {
@@ -294,10 +331,34 @@ export function SimpleDeviceConnection() {
       return;
     }
     
+    // Validate player selection
+    if (!selectedPlayerId) {
+      setPlayerSelectionError('Please select a player profile');
+      return;
+    }
+    
+    setSessionNameError('');
+    setPlayerSelectionError('');
+    
     try {
       console.log('Starting recording session with name:', sessionName);
-      // Start recording session first
-      const recordingStarted = await startRecording(sessionName);
+      
+      // Create a new session with player-device mapping
+      // Pass skipNameCheck=true since we've already validated the name above
+      const session = await createSessionWithPlayerDevice(
+        {
+          name: sessionName,
+          session_type: sessionType
+        },
+        selectedPlayerId,
+        deviceId,
+        true // Skip name check since we already did it
+      );
+      
+      console.log('Session created with player-device mapping:', session);
+      
+      // Start recording session using the EXISTING session ID to avoid recreating it
+      const recordingStarted = await startRecording(sessionName, session.id);
       console.log('Recording started:', recordingStarted);
       
       if (!recordingStarted) {
@@ -379,6 +440,9 @@ export function SimpleDeviceConnection() {
     setIsRedirecting(false);
   }, []);
   
+  // Available device IDs
+  const deviceIds = ['1', '2', '3', '4', '5'];
+  
   return (
     <div className="h-[calc(100vh-65px)] flex items-center justify-center p-4">
       <Card className={`mx-auto transition-all duration-300 ${isStreaming ? 'w-full' : 'max-w-md w-full'}`}>
@@ -437,11 +501,87 @@ export function SimpleDeviceConnection() {
                       <p className="text-sm text-red-500">{sessionNameError}</p>
                     )}
                   </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="sessionType">Session Type</Label>
+                    <Select
+                      value={sessionType}
+                      onValueChange={(value) => setSessionType(value as SessionType)}
+                    >
+                      <SelectTrigger id="sessionType">
+                        <SelectValue placeholder="Select session type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="solo">Solo Practice</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Currently only solo sessions are available
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="deviceId">Device ID</Label>
+                    <Select
+                      value={deviceId}
+                      onValueChange={setDeviceId}
+                    >
+                      <SelectTrigger id="deviceId">
+                        <SelectValue placeholder="Select device ID" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {deviceIds.map(id => (
+                          <SelectItem key={id} value={id}>
+                            Device {id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <Label htmlFor="playerSelect">Player Profile</Label>
+                    <Select
+                      value={selectedPlayerId}
+                      onValueChange={(value) => {
+                        setSelectedPlayerId(value);
+                        setPlayerSelectionError('');
+                      }}
+                    >
+                      <SelectTrigger id="playerSelect" className={playerSelectionError ? 'border-red-500' : ''}>
+                        <SelectValue placeholder="Select a player" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {playersLoading ? (
+                          <SelectItem value="loading" disabled>Loading players...</SelectItem>
+                        ) : players.length === 0 ? (
+                          <SelectItem value="none" disabled>No players available</SelectItem>
+                        ) : (
+                          players.map(player => (
+                            <SelectItem key={player.id} value={player.id}>
+                              {player.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                    {playerSelectionError && (
+                      <p className="text-sm text-red-500">{playerSelectionError}</p>
+                    )}
+                    {players.length === 0 && !playersLoading && (
+                      <Alert className="mt-2">
+                        <AlertDescription>
+                          No player profiles found. Please create a player profile first.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </div>
+                  
                   <div className="flex gap-2">
                     <Button
                       className="flex-1"
                       onClick={handleStartStreaming}
-                      disabled={!sessionName.trim()}
+                      disabled={!sessionName.trim() || !selectedPlayerId || playersLoading}
                     >
                       <Play className="mr-2 h-4 w-4" />
                       Start Session

@@ -11,7 +11,7 @@ interface RecordingContextType {
   players: PlayerEntity[];
   recordingDuration: number;
   dataPoints: number;
-  startRecording: (sessionName?: string) => Promise<boolean>;
+  startRecording: (sessionName?: string, existingSessionId?: string) => Promise<boolean>;
   stopRecording: () => Promise<boolean>;
   setPlayer: (playerId: string) => void;
   addDataPoint: (data: number[]) => Promise<boolean>;
