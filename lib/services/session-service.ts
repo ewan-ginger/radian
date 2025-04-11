@@ -237,29 +237,56 @@ export async function endSession(id: string): Promise<Session> {
  * @returns True if successful
  */
 export async function deleteSession(id: string): Promise<boolean> {
-  // First delete all sensor data records for this session
-  const { error: sensorDataError } = await supabaseClient
-    .from('sensor_data')
-    .delete()
-    .eq('session_id', id);
+  try {
+    // First delete all training_sensor_data records
+    const { error: trainingDataError } = await supabaseClient
+      .from('training_sensor_data')
+      .delete()
+      .eq('session_id', id);
 
-  if (sensorDataError) {
-    console.error(`Error deleting sensor data for session ${id}:`, sensorDataError);
-    throw sensorDataError;
+    if (trainingDataError) {
+      console.error(`Error deleting training data for session ${id}:`, trainingDataError);
+      // Continue anyway to try to delete other related data
+    }
+
+    // Then delete all sensor data records
+    const { error: sensorDataError } = await supabaseClient
+      .from('sensor_data')
+      .delete()
+      .eq('session_id', id);
+
+    if (sensorDataError) {
+      console.error(`Error deleting sensor data for session ${id}:`, sensorDataError);
+      throw sensorDataError;
+    }
+
+    // Delete session player mappings
+    const { error: sessionPlayersError } = await supabaseClient
+      .from('session_players')
+      .delete()
+      .eq('session_id', id);
+
+    if (sessionPlayersError) {
+      console.error(`Error deleting session players for session ${id}:`, sessionPlayersError);
+      // Continue anyway to try to delete the session
+    }
+
+    // Finally delete the session itself
+    const { error: sessionError } = await supabaseClient
+      .from('sessions')
+      .delete()
+      .eq('id', id);
+
+    if (sessionError) {
+      console.error(`Error deleting session ${id}:`, sessionError);
+      throw sessionError;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Error in deleteSession for ${id}:`, error);
+    throw error;
   }
-
-  // Then delete the session
-  const { error: sessionError } = await supabaseClient
-    .from(SESSIONS_TABLE)
-    .delete()
-    .eq('id', id);
-
-  if (sessionError) {
-    console.error(`Error deleting session with ID ${id}:`, sessionError);
-    throw sessionError;
-  }
-
-  return true;
 }
 
 /**

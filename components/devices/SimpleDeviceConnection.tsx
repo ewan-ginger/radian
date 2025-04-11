@@ -21,8 +21,6 @@ import {
 } from '@/components/ui/select';
 import { usePlayerData } from '@/hooks/usePlayerData';
 import { SessionType } from '@/types/database.types';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Spinner } from '@/components/ui/spinner';
 
 // Simple Alert component since we don't have a dedicated alert component
 const Alert = ({ className, children }: { className?: string, children: React.ReactNode }) => {
@@ -33,20 +31,21 @@ const Alert = ({ className, children }: { className?: string, children: React.Re
   );
 };
 
+// AlertDescription component
 const AlertDescription = ({ children }: { children: React.ReactNode }) => {
   return <div className="text-sm">{children}</div>;
 };
 
 // Simple spinner component since we don't have a dedicated spinner component
 const Spinner = ({ size = "md" }: { size?: "sm" | "md" | "lg" }) => {
-  const sizeClass = {
+  const sizeClasses = {
     sm: "h-4 w-4",
     md: "h-8 w-8",
     lg: "h-12 w-12"
-  }[size];
+  };
   
   return (
-    <div className={`animate-spin rounded-full border-t-2 border-blue-500 ${sizeClass}`}></div>
+    <div className={`animate-spin rounded-full border-b-2 border-primary ${sizeClasses[size]}`}></div>
   );
 };
 
@@ -83,8 +82,7 @@ export function SimpleDeviceConnection() {
     startRecording, 
     stopRecording, 
     addDataPoint,
-    sessionId,
-    sessionData
+    sessionId
   } = useRecording();
   
   const portRef = useRef<any | null>(null);
@@ -144,26 +142,37 @@ export function SimpleDeviceConnection() {
   };
   
   async function connectSerial() {
+    if (isConnected) {
+      console.log('Already connected');
+      return;
+    }
+    
     try {
+      if (!navigator.serial) {
+        setStatus('Web Serial API not supported');
+        console.error('Web Serial API not supported in this browser');
+        return;
+      }
+      
+      // Request a port from the user
       console.log('Requesting serial port...');
+      portRef.current = await navigator.serial.requestPort({
+        // Add filters if you need specific devices
+      });
       
-      // Request port without filters to show all available devices
-      const port = await navigator.serial.requestPort({});
-      portRef.current = port;
-      
-      console.log('Port selected:', port);
+      console.log('Port selected:', portRef.current);
       console.log('Opening port with baudRate: 115200');
       
-      await port.open({ baudRate: 115200 });
+      await portRef.current.open({ baudRate: 115200 });
       
       console.log('Port opened successfully');
       
       // Get writer
-      const writer = port.writable.getWriter();
+      const writer = portRef.current.writable.getWriter();
       writerRef.current = writer;
       
       // Get reader
-      const reader = port.readable.getReader();
+      const reader = portRef.current.readable.getReader();
       readerRef.current = reader;
       
       setIsConnected(true);
@@ -513,10 +522,11 @@ export function SimpleDeviceConnection() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="solo">Solo Practice</SelectItem>
+                        <SelectItem value="pass_calibration">Pass Calibration</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">
-                      Currently only solo sessions are available
+                      Select calibration session for collecting reference data
                     </p>
                   </div>
                   
