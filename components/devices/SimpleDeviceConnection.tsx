@@ -74,6 +74,8 @@ export function SimpleDeviceConnection() {
   const [deviceId, setDeviceId] = useState<string>('1');
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>('');
   const [playerSelectionError, setPlayerSelectionError] = useState<string>('');
+  const [calibrationTimeRemaining, setCalibrationTimeRemaining] = useState<number | null>(null);
+  const calibrationTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const { 
     isRecording, 
@@ -328,6 +330,71 @@ export function SimpleDeviceConnection() {
     }
   }
   
+  // Function to start calibration timer if applicable
+  const startCalibrationTimerIfNeeded = () => {
+    // Check if this is a calibration session
+    if (sessionType.includes('calibration')) {
+      const CALIBRATION_DURATION_MS = 1 * 60 * 1000; // 5 minutes in milliseconds
+      const endTime = Date.now() + CALIBRATION_DURATION_MS;
+      
+      // Set initial time remaining
+      setCalibrationTimeRemaining(CALIBRATION_DURATION_MS / 1000);
+      
+      // Clear any existing timer
+      if (calibrationTimerRef.current) {
+        clearInterval(calibrationTimerRef.current);
+      }
+      
+      // Start the countdown timer
+      calibrationTimerRef.current = setInterval(() => {
+        const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+        setCalibrationTimeRemaining(remaining);
+        
+        // Auto-stop when timer reaches 0
+        if (remaining === 0) {
+          clearInterval(calibrationTimerRef.current!);
+          calibrationTimerRef.current = null;
+          
+          // Only stop if still streaming
+          if (isStreaming && !isStopping) {
+            console.log('Calibration timer complete. Auto-stopping session.');
+            // Use setTimeout to ensure this runs after the current execution context
+            setTimeout(() => {
+              handleStopStreaming();
+            }, 0);
+          }
+        }
+      }, 1000);
+      
+      console.log(`Started calibration timer for ${CALIBRATION_DURATION_MS / 1000} seconds`);
+    }
+  };
+  
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (calibrationTimerRef.current) {
+        clearInterval(calibrationTimerRef.current);
+      }
+    };
+  }, []);
+  
+  // Monitor calibration timer
+  useEffect(() => {
+    // If timer reaches zero and we're still streaming, stop the session
+    if (calibrationTimeRemaining === 0 && isStreaming && !isStopping) {
+      console.log('Calibration timer reached zero. Auto-stopping session.');
+      handleStopStreaming();
+    }
+  }, [calibrationTimeRemaining, isStreaming, isStopping]);
+  
+  // Format the remaining time as MM:SS
+  const formatRemainingTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+  
   async function handleStartStreaming() {
     if (!isConnected) {
       console.error('Cannot start streaming: not connected to device');
@@ -381,6 +448,9 @@ export function SimpleDeviceConnection() {
       // Set streaming state
       setIsStreaming(true);
       console.log('Streaming started. isStreaming:', true);
+      
+      // Start calibration timer if this is a calibration session
+      startCalibrationTimerIfNeeded();
     } catch (error) {
       console.error('Error starting streaming:', error);
       // If there was an error, stop the recording
@@ -393,8 +463,25 @@ export function SimpleDeviceConnection() {
       return;
     }
     
+    // Prevent multiple stop attempts
+    if (isStopping) {
+      console.log('Already stopping, ignoring duplicate request');
+      return;
+    }
+    
     try {
+      // Set stopping state immediately
       setIsStopping(true);
+      
+      // Clear calibration timer if it exists
+      if (calibrationTimerRef.current) {
+        console.log('Clearing calibration timer');
+        clearInterval(calibrationTimerRef.current);
+        calibrationTimerRef.current = null;
+        setCalibrationTimeRemaining(null);
+      }
+      
+      console.log('Stopping session...');
       setIsRedirecting(true);
       
       // Send stop command to the device first
@@ -402,6 +489,7 @@ export function SimpleDeviceConnection() {
       
       // Stop recording if it's active
       if (isRecording) {
+        console.log('Stopping recording...');
         await stopRecording();
       }
       
@@ -411,9 +499,12 @@ export function SimpleDeviceConnection() {
       setParsedSensorData([]);
       setSessionName('');
       
+      console.log('Session stopped, waiting for data processing...');
+      
       // Wait for 5 seconds to ensure session is processed
       await new Promise(resolve => setTimeout(resolve, 5000));
       
+      console.log('Redirecting to session details...');
       // Redirect to the session page or devices page
       window.location.href = sessionId ? `/sessions/${sessionId}` : '/devices';
       
@@ -437,6 +528,14 @@ export function SimpleDeviceConnection() {
       console.error('Error resetting device:', error);
     }
   }
+  
+  // Test function to immediately end calibration timer (for debugging)
+  const testEndCalibration = () => {
+    if (isStreaming && sessionType.includes('calibration') && calibrationTimeRemaining !== null) {
+      console.log('Test: Manually triggering end of calibration');
+      setCalibrationTimeRemaining(0);
+    }
+  };
   
   // Reset all state when component mounts or when navigating to the page
   useEffect(() => {
@@ -528,6 +627,11 @@ export function SimpleDeviceConnection() {
                     <p className="text-xs text-muted-foreground">
                       Select calibration session for collecting reference data
                     </p>
+                    {sessionType.includes('calibration') && (
+                      <p className="text-xs text-orange-500 mt-1">
+                        Note: Calibration sessions will automatically end after 5 minutes
+                      </p>
+                    )}
                   </div>
                   
                   <div className="space-y-2">
@@ -617,6 +721,21 @@ export function SimpleDeviceConnection() {
                       <p className="text-sm text-muted-foreground">
                         Data Points: {dataPoints}
                       </p>
+                      {sessionType.includes('calibration') && calibrationTimeRemaining !== null && (
+                        <p className="text-sm font-medium text-orange-500">
+                          Auto-stop in: {formatRemainingTime(calibrationTimeRemaining)}
+                          {/* Hidden debugging button - remove in production */}
+                          <button 
+                            className="ml-2 text-xs text-gray-400 hover:text-gray-600" 
+                            onClick={(e) => {
+                              e.preventDefault();
+                              testEndCalibration();
+                            }}
+                          >
+                            [test]
+                          </button>
+                        </p>
+                      )}
                     </div>
                     <div className="flex gap-2">
                       <Button
