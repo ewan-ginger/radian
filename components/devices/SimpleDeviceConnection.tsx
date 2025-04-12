@@ -76,6 +76,13 @@ export function SimpleDeviceConnection() {
   const [playerSelectionError, setPlayerSelectionError] = useState<string>('');
   const [calibrationTimeRemaining, setCalibrationTimeRemaining] = useState<number | null>(null);
   const calibrationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const beepTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const firstBeepTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const mainBeepAudioRef = useRef<HTMLAudioElement | null>(null);
+  const readyBeepAudioRef = useRef<HTMLAudioElement | null>(null);
+  const setBeepAudioRef = useRef<HTMLAudioElement | null>(null);
+  const timeoutIdsRef = useRef<number[]>([]);
+  const timeoutCleanupRef = useRef<(() => void) | null>(null);
   
   const { 
     isRecording, 
@@ -112,6 +119,160 @@ export function SimpleDeviceConnection() {
       disconnectSerial();
     };
   }, []);
+  
+  // Create audio elements for beep sounds
+  useEffect(() => {
+    // Create audio elements
+    mainBeepAudioRef.current = new Audio('/sounds/beep.mp3');
+    readyBeepAudioRef.current = new Audio('/sounds/ready-beep.mp3');
+    setBeepAudioRef.current = new Audio('/sounds/set-beep.mp3');
+    
+    // Add error handler for the ready beep
+    if (readyBeepAudioRef.current) {
+      readyBeepAudioRef.current.onerror = () => {
+        console.warn('Ready beep sound file not found, using fallback');
+        // Use main beep as fallback
+        readyBeepAudioRef.current = new Audio('/sounds/beep.mp3');
+        if (readyBeepAudioRef.current) {
+          readyBeepAudioRef.current.volume = 0.7;
+          readyBeepAudioRef.current.playbackRate = 0.8; // Slower for "Ready"
+          readyBeepAudioRef.current.load();
+        }
+      };
+    }
+    
+    // Add error handler for the set beep
+    if (setBeepAudioRef.current) {
+      setBeepAudioRef.current.onerror = () => {
+        console.warn('Set beep sound file not found, using fallback');
+        // Use main beep as fallback
+        setBeepAudioRef.current = new Audio('/sounds/beep.mp3');
+        if (setBeepAudioRef.current) {
+          setBeepAudioRef.current.volume = 0.8;
+          setBeepAudioRef.current.playbackRate = 1.0; // Normal rate for "Set"
+          setBeepAudioRef.current.load();
+        }
+      };
+    }
+    
+    // Set properties
+    if (mainBeepAudioRef.current) {
+      mainBeepAudioRef.current.volume = 1.0;
+      mainBeepAudioRef.current.load();
+    }
+    
+    if (readyBeepAudioRef.current) {
+      readyBeepAudioRef.current.volume = 0.8;
+      readyBeepAudioRef.current.load();
+    }
+    
+    if (setBeepAudioRef.current) {
+      setBeepAudioRef.current.volume = 0.9;
+      setBeepAudioRef.current.load();
+    }
+    
+    return () => {
+      mainBeepAudioRef.current = null;
+      readyBeepAudioRef.current = null;
+      setBeepAudioRef.current = null;
+    };
+  }, []);
+  
+  // Function to play main beep sound with retry
+  const playMainBeep = (volume = 1.0) => {
+    if (!mainBeepAudioRef.current) return;
+    
+    // Reset audio to start
+    mainBeepAudioRef.current.currentTime = 0;
+    
+    // Set the volume for this beep
+    mainBeepAudioRef.current.volume = volume;
+    
+    // Play with retry logic if it fails
+    const playPromise = mainBeepAudioRef.current.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.error('Error playing main beep, retrying:', err);
+        // Retry after a short delay
+        setTimeout(() => {
+          if (mainBeepAudioRef.current) {
+            mainBeepAudioRef.current.currentTime = 0;
+            mainBeepAudioRef.current.play().catch(err => console.error('Retry failed:', err));
+          }
+        }, 100);
+      });
+    }
+  };
+  
+  // Function to play ready beep sound with retry
+  const playReadyBeep = (volume = 0.8) => {
+    if (!readyBeepAudioRef.current) return;
+    
+    // Reset audio to start
+    readyBeepAudioRef.current.currentTime = 0;
+    
+    // Set the volume for this beep
+    readyBeepAudioRef.current.volume = volume;
+    
+    // Play with retry logic if it fails
+    const playPromise = readyBeepAudioRef.current.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.error('Error playing ready beep, retrying:', err);
+        // Retry after a short delay
+        setTimeout(() => {
+          if (readyBeepAudioRef.current) {
+            readyBeepAudioRef.current.currentTime = 0;
+            readyBeepAudioRef.current.play().catch(err => console.error('Retry failed:', err));
+          }
+        }, 100);
+      });
+    }
+  };
+  
+  // Function to play set beep sound with retry
+  const playSetBeep = (volume = 0.9) => {
+    if (!setBeepAudioRef.current) return;
+    
+    // Reset audio to start
+    setBeepAudioRef.current.currentTime = 0;
+    
+    // Set the volume for this beep
+    setBeepAudioRef.current.volume = volume;
+    
+    // Play with retry logic if it fails
+    const playPromise = setBeepAudioRef.current.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(err => {
+        console.error('Error playing set beep, retrying:', err);
+        // Retry after a short delay
+        setTimeout(() => {
+          if (setBeepAudioRef.current) {
+            setBeepAudioRef.current.currentTime = 0;
+            setBeepAudioRef.current.play().catch(err => console.error('Retry failed:', err));
+          }
+        }, 100);
+      });
+    }
+  };
+  
+  // Function to play the Ready-Set warning sequence
+  const playReadySetSequence = (timeToMainBeep = 1000) => {
+    // Calculate when to play each sound based on the time to main beep
+    const readyTime = 0; // Play "Ready" immediately
+    const setTime = timeToMainBeep - 500; // Play "Set" 0.5 seconds before main beep
+    
+    // Play "Ready" beep
+    playReadyBeep();
+    
+    // Play "Set" beep at the calculated time
+    setTimeout(() => {
+      playSetBeep();
+    }, setTime);
+  };
   
   // Validate session name
   const validateSessionName = async () => {
@@ -334,26 +495,69 @@ export function SimpleDeviceConnection() {
   const startCalibrationTimerIfNeeded = () => {
     // Check if this is a calibration session
     if (sessionType.includes('calibration')) {
-      const CALIBRATION_DURATION_MS = 1 * 60 * 1000; // 5 minutes in milliseconds
-      const endTime = Date.now() + CALIBRATION_DURATION_MS;
+      // Configuration for different calibration types
+      const calibrationConfig = {
+        'pass_calibration': {
+          durationMinutes: 5,
+          beepIntervalSeconds: 5
+        },
+        // Can add more configurations for other calibration types here
+        // 'other_calibration_type': { durationMinutes: X, beepIntervalSeconds: Y }
+      };
+      
+      // Get configuration for this session type or use default
+      const config = calibrationConfig[sessionType as keyof typeof calibrationConfig] || {
+        durationMinutes: 5, // Default 5 minutes
+        beepIntervalSeconds: 5 // Default 5 second beep interval
+      };
+      
+      const CALIBRATION_DURATION_MS = config.durationMinutes * 60 * 1000;
+      const BEEP_INTERVAL_MS = config.beepIntervalSeconds * 1000;
+      
+      // Calculate end time from now
+      const startTime = Date.now();
+      const endTime = startTime + CALIBRATION_DURATION_MS;
       
       // Set initial time remaining
       setCalibrationTimeRemaining(CALIBRATION_DURATION_MS / 1000);
       
-      // Clear any existing timer
+      // Clear any existing timers
       if (calibrationTimerRef.current) {
         clearInterval(calibrationTimerRef.current);
       }
+      if (beepTimerRef.current) {
+        clearInterval(beepTimerRef.current);
+      }
+      if (firstBeepTimeoutRef.current) {
+        clearTimeout(firstBeepTimeoutRef.current);
+      }
+      
+      // Clean up any existing timeouts
+      timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
+      timeoutIdsRef.current = [];
       
       // Start the countdown timer
       calibrationTimerRef.current = setInterval(() => {
-        const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+        const now = Date.now();
+        const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
         setCalibrationTimeRemaining(remaining);
         
         // Auto-stop when timer reaches 0
         if (remaining === 0) {
           clearInterval(calibrationTimerRef.current!);
           calibrationTimerRef.current = null;
+          
+          // Also clear beep timer
+          if (beepTimerRef.current) {
+            clearInterval(beepTimerRef.current);
+            beepTimerRef.current = null;
+          }
+          
+          // Clear first beep timeout if it exists
+          if (firstBeepTimeoutRef.current) {
+            clearTimeout(firstBeepTimeoutRef.current);
+            firstBeepTimeoutRef.current = null;
+          }
           
           // Only stop if still streaming
           if (isStreaming && !isStopping) {
@@ -367,17 +571,82 @@ export function SimpleDeviceConnection() {
       }, 1000);
       
       console.log(`Started calibration timer for ${CALIBRATION_DURATION_MS / 1000} seconds`);
+      
+      // Track all timeout IDs for potential cleanup
+      const timeoutIds: number[] = [];
+      
+      // Schedule all beeps at fixed timepoints based on the start time
+      const scheduleAllBeeps = () => {
+        // Add a little buffer time to ensure the first beep sequence timing is accurate
+        const startTime = Date.now() + 50; // Add 50ms buffer to account for scheduling delays
+        
+        // Calculate the total number of beeps needed
+        const totalBeepsNeeded = Math.floor(CALIBRATION_DURATION_MS / BEEP_INTERVAL_MS);
+        console.log(`Scheduling ${totalBeepsNeeded} beep sequences`);
+        
+        // Schedule all the beeps at once with precise timing
+        for (let i = 0; i < totalBeepsNeeded; i++) {
+          // Calculate the exact time for this beep from the start
+          const beepTime = startTime + (i + 1) * BEEP_INTERVAL_MS;
+          const readyTime = beepTime - 1000; // 1 second before the beep
+          const setTime = beepTime - 500; // 0.5 seconds before the beep
+          
+          // Log the first few beeps for debugging
+          if (i < 3) {
+            const nowMs = Date.now();
+            console.log(`Scheduling beep ${i+1}: Ready at +${readyTime - nowMs}ms, Set at +${setTime - nowMs}ms, Go at +${beepTime - nowMs}ms`);
+          }
+          
+          // Schedule the Ready beep
+          const readyTimeoutId = window.setTimeout(() => {
+            // Only play if not stopping and component is still mounted
+            if (!isStopping && mainBeepAudioRef.current) {
+              console.log(`Playing Ready beep ${i+1} at ${Date.now()}`);
+              playReadyBeep();
+            }
+          }, readyTime - Date.now());
+          timeoutIds.push(readyTimeoutId);
+          
+          // Schedule the Set beep
+          const setTimeoutId = window.setTimeout(() => {
+            // Only play if not stopping and component is still mounted
+            if (!isStopping && mainBeepAudioRef.current) {
+              console.log(`Playing Set beep ${i+1} at ${Date.now()}`);
+              playSetBeep();
+            }
+          }, setTime - Date.now());
+          timeoutIds.push(setTimeoutId);
+          
+          // Schedule the Go beep
+          const goTimeoutId = window.setTimeout(() => {
+            // Only play if not stopping and component is still mounted
+            if (!isStopping && mainBeepAudioRef.current) {
+              console.log(`Playing Go beep ${i+1} at ${Date.now()}`);
+              playMainBeep();
+            }
+          }, beepTime - Date.now());
+          timeoutIds.push(goTimeoutId);
+        }
+      };
+      
+      // Store the timeouts in our component-level ref
+      timeoutIdsRef.current = timeoutIds;
+      
+      // Start scheduling all the beeps
+      scheduleAllBeeps();
+      
+      // Return a cleanup function that will be called when the component unmounts
+      // or when the session is stopped
+      return () => {
+        // Clear all timeout IDs
+        timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
+        timeoutIdsRef.current = [];
+      };
     }
+    
+    // Return empty cleanup if not a calibration session
+    return () => {};
   };
-  
-  // Clean up timer on unmount
-  useEffect(() => {
-    return () => {
-      if (calibrationTimerRef.current) {
-        clearInterval(calibrationTimerRef.current);
-      }
-    };
-  }, []);
   
   // Monitor calibration timer
   useEffect(() => {
@@ -449,8 +718,12 @@ export function SimpleDeviceConnection() {
       setIsStreaming(true);
       console.log('Streaming started. isStreaming:', true);
       
+      // Set isStopping to false to ensure beeps will play
+      setIsStopping(false);
+      
       // Start calibration timer if this is a calibration session
-      startCalibrationTimerIfNeeded();
+      // and store the cleanup function
+      timeoutCleanupRef.current = startCalibrationTimerIfNeeded();
     } catch (error) {
       console.error('Error starting streaming:', error);
       // If there was an error, stop the recording
@@ -473,12 +746,50 @@ export function SimpleDeviceConnection() {
       // Set stopping state immediately
       setIsStopping(true);
       
+      // Immediately stop all audio playback
+      if (mainBeepAudioRef.current) {
+        mainBeepAudioRef.current.pause();
+        mainBeepAudioRef.current.currentTime = 0;
+      }
+      
+      if (readyBeepAudioRef.current) {
+        readyBeepAudioRef.current.pause();
+        readyBeepAudioRef.current.currentTime = 0;
+      }
+      
+      if (setBeepAudioRef.current) {
+        setBeepAudioRef.current.pause();
+        setBeepAudioRef.current.currentTime = 0;
+      }
+      
       // Clear calibration timer if it exists
       if (calibrationTimerRef.current) {
         console.log('Clearing calibration timer');
         clearInterval(calibrationTimerRef.current);
         calibrationTimerRef.current = null;
         setCalibrationTimeRemaining(null);
+      }
+      
+      // Clear beep timer if it exists
+      if (beepTimerRef.current) {
+        console.log('Clearing beep timer');
+        clearInterval(beepTimerRef.current);
+        beepTimerRef.current = null;
+      }
+      
+      // Clear first beep timeout if it exists
+      if (firstBeepTimeoutRef.current) {
+        console.log('Clearing first beep timeout');
+        clearTimeout(firstBeepTimeoutRef.current);
+        firstBeepTimeoutRef.current = null;
+      }
+      
+      // Clear all scheduled setTimeout beeps
+      // This will call the cleanup function returned by startCalibrationTimerIfNeeded
+      if (timeoutCleanupRef.current) {
+        console.log('Clearing all scheduled beep timeouts');
+        timeoutCleanupRef.current();
+        timeoutCleanupRef.current = null;
       }
       
       console.log('Stopping session...');
@@ -528,14 +839,6 @@ export function SimpleDeviceConnection() {
       console.error('Error resetting device:', error);
     }
   }
-  
-  // Test function to immediately end calibration timer (for debugging)
-  const testEndCalibration = () => {
-    if (isStreaming && sessionType.includes('calibration') && calibrationTimeRemaining !== null) {
-      console.log('Test: Manually triggering end of calibration');
-      setCalibrationTimeRemaining(0);
-    }
-  };
   
   // Reset all state when component mounts or when navigating to the page
   useEffect(() => {
@@ -724,16 +1027,6 @@ export function SimpleDeviceConnection() {
                       {sessionType.includes('calibration') && calibrationTimeRemaining !== null && (
                         <p className="text-sm font-medium text-orange-500">
                           Auto-stop in: {formatRemainingTime(calibrationTimeRemaining)}
-                          {/* Hidden debugging button - remove in production */}
-                          <button 
-                            className="ml-2 text-xs text-gray-400 hover:text-gray-600" 
-                            onClick={(e) => {
-                              e.preventDefault();
-                              testEndCalibration();
-                            }}
-                          >
-                            [test]
-                          </button>
                         </p>
                       )}
                     </div>
