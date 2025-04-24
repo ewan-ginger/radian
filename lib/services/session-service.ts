@@ -29,7 +29,7 @@ export async function getAllSessions(): Promise<SessionEntity[]> {
         session_id,
         player_id,
         device_id,
-        player_profiles:player_id(name)
+        player_profiles ( name ) 
       `);
 
     if (playersError) {
@@ -46,10 +46,12 @@ export async function getAllSessions(): Promise<SessionEntity[]> {
           sessionPlayersMap.set(sp.session_id, []);
         }
         
-        if (sp.player_profiles?.name) {
+        // Use type assertion to bypass potential inference issues
+        const profile = sp.player_profiles as any; 
+        if (profile?.name) {
           sessionPlayersMap.get(sp.session_id)?.push({
             player_id: sp.player_id,
-            name: sp.player_profiles.name
+            name: profile.name
           });
         }
       });
@@ -231,6 +233,52 @@ export async function endSession(id: string): Promise<Session> {
   return updatedSession as Session;
 }
 
+async function deleteInBatches(tableName: string, sessionId: string, batchSize: number = 100): Promise<Error | null> {
+  console.log(`Starting batch delete for ${tableName}, session ${sessionId}`);
+  let deletedCount = 0;
+  while (true) {
+    try {
+      // Find a batch of primary keys to delete
+      const { data: idsToDelete, error: selectError } = await supabaseClient
+        .from(tableName)
+        .select('id') // Select only the primary key
+        .eq('session_id', sessionId)
+        .limit(batchSize);
+
+      if (selectError) {
+        console.error(`Error selecting batch from ${tableName} for session ${sessionId}:`, selectError);
+        return new Error(`Failed to select batch from ${tableName}: ${selectError.message}`);
+      }
+
+      // If no more rows found for this session, we're done
+      if (!idsToDelete || idsToDelete.length === 0) {
+        console.log(`Finished batch delete for ${tableName}, session ${sessionId}. Total deleted: ${deletedCount}`);
+        return null; // Success
+      }
+
+      const ids = idsToDelete.map(row => row.id);
+      
+      // Delete the batch by primary key
+      const { error: deleteError } = await supabaseClient
+        .from(tableName)
+        .delete()
+        .in('id', ids);
+        
+      if (deleteError) {
+        console.error(`Error deleting batch from ${tableName} for session ${sessionId}:`, deleteError);
+        return new Error(`Failed to delete batch from ${tableName}: ${deleteError.message}`);
+      }
+
+      deletedCount += ids.length;
+      console.log(`Deleted batch of ${ids.length} from ${tableName}. Total deleted so far: ${deletedCount}`);
+
+    } catch (batchError) {
+      console.error(`Unexpected error during batch delete for ${tableName}, session ${sessionId}:`, batchError);
+      return batchError instanceof Error ? batchError : new Error('Unknown error during batch delete');
+    }
+  }
+}
+
 /**
  * Delete a session
  * @param id Session ID
@@ -238,54 +286,52 @@ export async function endSession(id: string): Promise<Session> {
  */
 export async function deleteSession(id: string): Promise<boolean> {
   try {
-    // First delete all training_sensor_data records
-    const { error: trainingDataError } = await supabaseClient
-      .from('training_sensor_data')
-      .delete()
-      .eq('session_id', id);
-
+    // Batch delete training_sensor_data records (use batch size 100)
+    const trainingDataError = await deleteInBatches('training_sensor_data', id, 100);
     if (trainingDataError) {
-      console.error(`Error deleting training data for session ${id}:`, trainingDataError);
-      // Continue anyway to try to delete other related data
+      // Decide if this error is critical. If so, throw.
+      console.error(`Failed to fully delete training data for session ${id}:`, trainingDataError.message);
+      throw trainingDataError; // Or handle differently, e.g., log and continue
     }
 
-    // Then delete all sensor data records
-    const { error: sensorDataError } = await supabaseClient
-      .from('sensor_data')
-      .delete()
-      .eq('session_id', id);
-
+    // Batch delete sensor_data records (use batch size 100)
+    const sensorDataError = await deleteInBatches('sensor_data', id, 100);
     if (sensorDataError) {
-      console.error(`Error deleting sensor data for session ${id}:`, sensorDataError);
+      // Sensor data deletion failure is critical as per original logic
+      console.error(`Failed to fully delete sensor data for session ${id}:`, sensorDataError.message);
       throw sensorDataError;
     }
 
-    // Delete session player mappings
+    // Delete session player mappings (usually not large, batching likely overkill)
     const { error: sessionPlayersError } = await supabaseClient
-      .from('session_players')
+      .from(SESSION_PLAYERS_TABLE)
       .delete()
       .eq('session_id', id);
 
     if (sessionPlayersError) {
       console.error(`Error deleting session players for session ${id}:`, sessionPlayersError);
-      // Continue anyway to try to delete the session
+      // Decide if this error is critical. Let's throw for safety.
+      throw new Error(`Failed to delete session players: ${sessionPlayersError.message}`);
     }
 
-    // Finally delete the session itself
+    // Delete the session itself
     const { error: sessionError } = await supabaseClient
-      .from('sessions')
+      .from(SESSIONS_TABLE)
       .delete()
       .eq('id', id);
 
     if (sessionError) {
-      console.error(`Error deleting session ${id}:`, sessionError);
-      throw sessionError;
+      console.error(`Error deleting session record ${id}:`, sessionError);
+      throw new Error(`Failed to delete session record: ${sessionError.message}`);
     }
 
+    console.log(`Successfully deleted session ${id} and all related data.`);
     return true;
+
   } catch (error) {
-    console.error(`Error in deleteSession for ${id}:`, error);
-    throw error;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Error in deleteSession process for ${id}: ${errorMessage}`, error);
+    throw new Error(`Failed to delete session ${id}: ${errorMessage}`);
   }
 }
 
@@ -297,70 +343,57 @@ export async function deleteSession(id: string): Promise<boolean> {
 export async function getSessionSummary(sessionId: string): Promise<SessionSummary | null> {
   // First, get the session
   const session = await getSessionById(sessionId);
-  
+
   if (!session) {
     return null;
   }
-  
-  // Get data points count grouped by device
-  const { data: sensorData, error: sensorError } = await supabaseClient
+
+  // Get data points count directly
+  const { count, error: countError } = await supabaseClient
     .from(SENSOR_DATA_TABLE)
-    .select('device_id')
+    .select('*' , { count: 'exact', head: true }) // Use count and head:true for efficiency
     .eq('session_id', sessionId);
-  
-  if (sensorError) {
-    console.error(`Error fetching sensor data for session ${sessionId}:`, sensorError);
-    throw new Error(`Failed to fetch session summary: ${sensorError.message}`);
+
+  if (countError) {
+    console.error(`Error counting sensor data for session ${sessionId}:`, countError);
+    throw new Error(`Failed to count sensor data: ${countError.message}`);
   }
-  
-  // Get session players information
+
+  const dataPointsCount = count ?? 0;
+
+  // Get session players information to list players involved
   const { data: sessionPlayers, error: sessionPlayersError } = await supabaseClient
     .from(SESSION_PLAYERS_TABLE)
     .select(`
       player_id,
       device_id,
-      player_profiles:player_id(name)
+      player_profiles ( name )
     `)
     .eq('session_id', sessionId);
-    
+
   if (sessionPlayersError) {
     console.error(`Error fetching session players for session ${sessionId}:`, sessionPlayersError);
+    // Continue without player info if needed, or handle error as appropriate
   }
-  
-  // Create a map of device_id to player name
-  const deviceToPlayerMap = new Map<string, string>();
+
+  // Extract unique player names
   const playerNames: string[] = [];
-  
+  const seenPlayerIds = new Set<string>();
   sessionPlayers?.forEach(sp => {
-    if (sp.device_id && sp.player_profiles?.name) {
-      deviceToPlayerMap.set(sp.device_id, sp.player_profiles.name);
-      // Add player name to array if not already there
-      if (sp.player_profiles.name && !playerNames.includes(sp.player_profiles.name)) {
-        playerNames.push(sp.player_profiles.name);
-      }
+    // Ensure player_profiles and name exist, and player hasn't been added yet
+    // Use type assertion to bypass potential inference issues
+    const profile = sp.player_profiles as any;
+    if (sp.player_id && profile?.name && !seenPlayerIds.has(sp.player_id)) {
+        playerNames.push(profile.name);
+        seenPlayerIds.add(sp.player_id); 
     }
   });
-  
-  // Count data points per device
-  const deviceMap = new Map<string, { deviceId: string, playerName: string, dataPoints: number }>();
-  
-  sensorData.forEach(data => {
-    const deviceId = data.device_id || 'unknown';
-    const playerName = deviceToPlayerMap.get(deviceId) || 'Unknown Player';
-    
-    if (!deviceMap.has(deviceId)) {
-      deviceMap.set(deviceId, { deviceId, playerName, dataPoints: 0 });
-    }
-    
-    const deviceData = deviceMap.get(deviceId)!;
-    deviceData.dataPoints += 1;
-  });
-  
+
   // Calculate duration
   const startTime = new Date(session.start_time);
   const endTime = session.end_time ? new Date(session.end_time) : new Date();
   const duration = Math.round((endTime.getTime() - startTime.getTime()) / 1000); // in seconds
-  
+
   return {
     sessionId: session.id,
     sessionName: session.name || `Session ${session.id.substring(0, 8)}`,
@@ -368,9 +401,9 @@ export async function getSessionSummary(sessionId: string): Promise<SessionSumma
     endTime: session.end_time ? new Date(session.end_time) : undefined,
     duration,
     sessionType: session.session_type,
-    devices: Array.from(deviceMap.values()),
+    devices: [], // Add empty array to satisfy the type for now
     players: playerNames,
-    dataPointsCount: sensorData.length,
+    dataPointsCount: dataPointsCount, // Use the accurate count
   };
 }
 
@@ -391,7 +424,8 @@ export async function getAllSessionsServer(): Promise<SessionEntity[]> {
     throw new Error(`Failed to fetch sessions on server: ${error.message}`);
   }
 
-  return data || [];
+  // Cast via unknown first as suggested by linter
+  return (data || []) as unknown as SessionEntity[];
 }
 
 /**

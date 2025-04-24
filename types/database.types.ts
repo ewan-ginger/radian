@@ -22,7 +22,7 @@ export type SessionType =
   | 'pass_catch_calibration'
   | 'groundball_calibration'
   | 'shot_calibration'
-  | 'faceoff_calibration' 
+  | 'faceoff_calibration'
   | 'cradle_calibration'
   | '2v2'
   | 'passing_partners'

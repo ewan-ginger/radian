@@ -59,6 +59,9 @@ CREATE TABLE ${SENSOR_DATA_TABLE} (
   battery_level REAL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- Add index for faster session lookups
+CREATE INDEX idx_sensor_data_session_id ON ${SENSOR_DATA_TABLE}(session_id);
 `;
 
 export const createSessionPlayersTableSQL = `

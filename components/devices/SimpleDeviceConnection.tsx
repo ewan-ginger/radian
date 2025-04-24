@@ -501,6 +501,10 @@ export function SimpleDeviceConnection() {
           durationMinutes: 5,
           beepIntervalSeconds: 5
         },
+        'groundball_calibration': {
+          durationMinutes: 5,
+          beepIntervalSeconds: 5
+        },
         // Can add more configurations for other calibration types here
         // 'other_calibration_type': { durationMinutes: X, beepIntervalSeconds: Y }
       };
@@ -925,6 +929,7 @@ export function SimpleDeviceConnection() {
                       <SelectContent>
                         <SelectItem value="solo">Solo Practice</SelectItem>
                         <SelectItem value="pass_calibration">Pass Calibration</SelectItem>
+                        <SelectItem value="groundball_calibration">Ground Ball Calibration</SelectItem>
                       </SelectContent>
                     </Select>
                     <p className="text-xs text-muted-foreground">

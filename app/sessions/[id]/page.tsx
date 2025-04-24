@@ -319,10 +319,9 @@ export default function SessionDetailPage() {
               
               <TabsContent value="orientation">
                 {sensorData.length > 0 ? (
-                  <OrientationGraph 
-                    data={transformDataForGraph(sensorData, 'orientation')} 
-                    title="Orientation (degrees)" 
-                    maxPoints={1000}
+                  <OrientationGraph
+                    data={transformDataForGraph(sensorData, 'orientation')}
+                    title="Orientation (degrees)"
                   />
                 ) : (
                   <div className="flex items-center justify-center h-[300px] border rounded-md">
@@ -333,10 +332,9 @@ export default function SessionDetailPage() {
               
               <TabsContent value="accelerometer">
                 {sensorData.length > 0 ? (
-                  <AccelerationGraph 
-                    data={transformDataForGraph(sensorData, 'accelerometer')} 
-                    title="Accelerometer (m/s²)" 
-                    maxPoints={1000}
+                  <AccelerationGraph
+                    data={transformDataForGraph(sensorData, 'accelerometer')}
+                    title="Accelerometer (m/s²)"
                   />
                 ) : (
                   <div className="flex items-center justify-center h-[300px] border rounded-md">
@@ -347,10 +345,9 @@ export default function SessionDetailPage() {
               
               <TabsContent value="gyroscope">
                 {sensorData.length > 0 ? (
-                  <GyroscopeGraph 
-                    data={transformDataForGraph(sensorData, 'gyroscope')} 
-                    title="Gyroscope (deg/s)" 
-                    maxPoints={1000}
+                  <GyroscopeGraph
+                    data={transformDataForGraph(sensorData, 'gyroscope')}
+                    title="Gyroscope (rad/s)"
                   />
                 ) : (
                   <div className="flex items-center justify-center h-[300px] border rounded-md">
@@ -361,10 +358,9 @@ export default function SessionDetailPage() {
               
               <TabsContent value="magnetometer">
                 {sensorData.length > 0 ? (
-                  <MagnetometerGraph 
-                    data={transformDataForGraph(sensorData, 'magnetometer')} 
-                    title="Magnetometer (μT)" 
-                    maxPoints={1000}
+                  <MagnetometerGraph
+                    data={transformDataForGraph(sensorData, 'magnetometer')}
+                    title="Magnetometer (μT)"
                   />
                 ) : (
                   <div className="flex items-center justify-center h-[300px] border rounded-md">

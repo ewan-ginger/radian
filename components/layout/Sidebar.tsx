@@ -13,6 +13,7 @@ import { SupabaseStatusPill } from "@/components/ui/SupabaseStatusPill";
 import { Input } from "@/components/ui/input";
 import { deleteSession, updateSession } from '@/lib/services/session-service';
 import { toast } from "sonner";
+import Image from 'next/image';
 
 export function Sidebar() {
   const router = useRouter();
@@ -196,12 +197,20 @@ export function Sidebar() {
         <div className="p-4 border-b flex items-center justify-between">
           {isOpen ? (
             <>
-              <span className="font-bold text-xl">Radian</span>
+              {/* Logo */}
+              <Image 
+                src="/radian_logo.png" 
+                alt="Radian Logo" 
+                width={30} 
+                height={30} 
+                className="mr-2"
+              />
+              <span className="font-roboto-mono text-[#474C59] font-bold text-xl">Radian_</span>
               <Button 
                 variant="ghost" 
                 size="icon" 
                 onClick={() => setIsOpen(false)}
-                className="ml-2"
+                className="ml-auto"
               >
                 <PanelLeft size={18} />
               </Button>

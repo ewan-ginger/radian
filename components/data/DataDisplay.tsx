@@ -15,7 +15,7 @@ const generateSampleData = (count: number, noiseLevel = 5) => {
   const startTime = 0;
   
   for (let i = 0; i < count; i++) {
-    const timestamp = startTime + i * 0.1; // 100ms intervals in seconds
+    const timestamp = startTime + i * 0.02; // Use 0.02s intervals for 50Hz
     data.push({
       timestamp,
       x: Math.sin(i * 0.1) * 45 + (Math.random() - 0.5) * noiseLevel,
@@ -142,7 +142,7 @@ export function DataDisplay() {
           <TabsContent value="gyroscope">
             <GyroscopeGraph 
               data={gyroscopeData} 
-              title="Gyroscope (deg/s)" 
+              title="Gyroscope (rad/s)" 
               maxPoints={visiblePoints}
             />
           </TabsContent>

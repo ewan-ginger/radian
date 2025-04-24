@@ -16,6 +16,11 @@ module.exports = {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ["var(--font-geist-sans)"],
+        mono: ["var(--font-geist-mono)"],
+        "roboto-mono": ["var(--font-roboto-mono)"],
+      },
       colors: {
         border: "var(--border)",
         input: "var(--input)",

@@ -29,7 +29,7 @@ export class SessionManager {
   private flushInterval: number = 5000; // Flush buffer every 5 seconds
   private firstTimestamp: number | null = null; // Track the first timestamp for normalization
   private lastNormalizedTimestamp: number = 0; // Track the last normalized timestamp
-  private timestampInterval: number = 0.1; // Interval between normalized timestamps (seconds)
+  private timestampInterval: number = 0.02; // Interval for 50Hz (seconds)
   private isFlushingBuffer: boolean = false; // Track if we're currently flushing
   private pendingBuffer: SensorDataInsert[] = []; // Buffer for data received during flush
   
@@ -193,7 +193,7 @@ export class SessionManager {
   /**
    * Normalize a timestamp relative to the first timestamp in the session
    * @param rawTimestamp Raw timestamp from the sensor
-   * @returns Normalized timestamp starting from 0 and incrementing by 0.1
+   * @returns Normalized timestamp starting from 0 and incrementing by 0.02
    */
   private normalizeTimestamp(rawTimestamp: number): number {
     // If this is the first timestamp in the session, set it as the baseline
@@ -204,9 +204,9 @@ export class SessionManager {
     }
     
     // Calculate the normalized timestamp based on sequence
-    // This ensures timestamps are always 0.1 seconds apart regardless of actual time
+    // This ensures timestamps are always 0.02 seconds apart regardless of actual time
     this.lastNormalizedTimestamp += this.timestampInterval;
-    return parseFloat(this.lastNormalizedTimestamp.toFixed(1)); // Ensure we have exactly one decimal place
+    return parseFloat(this.lastNormalizedTimestamp.toFixed(2)); // Use 2 decimal places for 50Hz
   }
   
   /**
@@ -269,7 +269,7 @@ export class SessionManager {
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
         session_id: this.sessionId,
-        device_id: data[0] || 0,
+        device_id: String(data[0] || 'unknown'),
         timestamp: normalizedTimestamp,
         battery_level: data[2] || 0,
         orientation_x: data[3] || 0,

@@ -7,28 +7,56 @@ import { SensorDataEntity, TimeSeriesDataPoint, OrientationData } from '@/types/
 /**
  * Get sensor data for a session
  * @param sessionId Session ID
- * @param limit Maximum number of records to return (default: 1000)
- * @param offset Offset for pagination (default: 0)
  * @returns Array of sensor data records
  */
 export async function getSensorDataBySession(
-  sessionId: string,
-  limit: number = 1000,
-  offset: number = 0
+  sessionId: string
 ): Promise<SensorDataEntity[]> {
-  const { data, error } = await supabaseClient
-    .from(SENSOR_DATA_TABLE)
-    .select('*')
-    .eq('session_id', sessionId)
-    .order('timestamp', { ascending: true })
-    .range(offset, offset + limit - 1);
+  const PAGE_SIZE = 1000; // Default Supabase limit
+  let allData: SensorDataEntity[] = [];
+  let offset = 0;
+  let keepFetching = true;
 
-  if (error) {
-    console.error(`Error fetching sensor data for session ${sessionId}:`, error);
-    throw new Error(`Failed to fetch sensor data: ${error.message}`);
+  console.log(`Fetching all sensor data for session ${sessionId} with pagination...`);
+
+  while (keepFetching) {
+    try {
+      console.log(`Fetching page with offset: ${offset}, limit: ${PAGE_SIZE}`);
+      const { data, error } = await supabaseClient
+        .from(SENSOR_DATA_TABLE)
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('timestamp', { ascending: true })
+        .range(offset, offset + PAGE_SIZE - 1);
+
+      if (error) {
+        console.error(`Error fetching page for session ${sessionId} (offset: ${offset}):`, error);
+        throw new Error(`Failed to fetch sensor data page: ${error.message}`);
+      }
+
+      if (data && data.length > 0) {
+        console.log(`Fetched ${data.length} records for this page.`);
+        allData = allData.concat(data);
+        offset += data.length;
+        // If we received fewer than PAGE_SIZE records, this was the last page
+        if (data.length < PAGE_SIZE) {
+          keepFetching = false;
+        }
+      } else {
+        // No more data found
+        console.log('No more data found, stopping fetch loop.');
+        keepFetching = false;
+      }
+    } catch (error) {
+      // Stop fetching if an error occurs during pagination
+      console.error('Stopping fetch loop due to error.');
+      keepFetching = false;
+      throw error; // Re-throw the error after logging
+    }
   }
 
-  return data || [];
+  console.log(`Finished fetching. Total records for session ${sessionId}: ${allData.length}`);
+  return allData;
 }
 
 /**
