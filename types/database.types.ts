@@ -28,6 +28,30 @@ export type SessionType =
   | 'passing_partners'
   | 'solo';
 
+// Helper function to get required players for a session type
+export const getRequiredPlayers = (sessionType?: SessionType): number => {
+  if (!sessionType) return 1; // Default to 1 if type is unknown or not set
+  switch (sessionType) {
+    case 'pass_calibration':
+    case 'groundball_calibration':
+    case 'cradle_calibration':
+    case 'solo':
+      return 1;
+    case 'pass_catch_calibration':
+    case 'shot_calibration':
+    case 'faceoff_calibration':
+    case 'passing_partners':
+      return 2;
+    case '2v2':
+      return 5;
+    default:
+      // Ensure all session types are handled. If a new type is added,
+      // this will help catch it during development.
+      const _exhaustiveCheck: never = sessionType;
+      return 1; // Default fallback
+  }
+};
+
 // Session entity with additional application-specific properties
 export interface SessionEntity {
   id: string;

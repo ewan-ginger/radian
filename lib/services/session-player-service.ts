@@ -119,4 +119,38 @@ export async function getSessionPlayerById(id: string): Promise<SessionPlayerEnt
     ...data,
     playerName: data.player?.name || 'Unknown Player'
   };
+}
+
+/**
+ * Add multiple player-device assignments to a session in a single batch
+ * @param sessionId The ID of the session to add players to
+ * @param mappings Array of objects containing playerId and deviceId
+ * @returns The created session player assignments
+ */
+export async function addSessionPlayersBatch(sessionId: string, mappings: { playerId: string, deviceId: string }[]): Promise<SessionPlayer[]> {
+  if (mappings.length === 0) {
+    console.log('No player mappings provided for batch add.');
+    return [];
+  }
+
+  const recordsToInsert: SessionPlayerInsert[] = mappings.map(mapping => ({
+    session_id: sessionId,
+    player_id: mapping.playerId,
+    device_id: mapping.deviceId
+  }));
+
+  console.log(`Attempting to insert ${recordsToInsert.length} session player records for session ${sessionId}`);
+
+  const { data, error } = await supabaseClient
+    .from(SESSION_PLAYERS_TABLE)
+    .insert(recordsToInsert)
+    .select();
+
+  if (error) {
+    console.error('Error adding session players batch:', error);
+    throw new Error(`Failed to add session players batch: ${error.message}`);
+  }
+
+  console.log(`Successfully inserted ${data?.length || 0} session player records`);
+  return data || [];
 } 

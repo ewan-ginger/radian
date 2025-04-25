@@ -1,15 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Usb, Play, Pause, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useRecording } from '@/context/RecordingContext';
-import { formatDuration } from '@/lib/utils';
+import { formatDuration, formatSessionType } from '@/lib/utils';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { checkSessionNameExists, createSessionWithPlayerDevice } from '@/lib/services/session-service';
+import { checkSessionNameExists, createSession } from '@/lib/services/session-service';
+import { addSessionPlayersBatch } from '@/lib/services/session-player-service';
 import { LiveDataGraph } from './LiveDataGraph';
 import { useRouter } from 'next/navigation';
 import { 
@@ -20,7 +21,9 @@ import {
   SelectValue
 } from '@/components/ui/select';
 import { usePlayerData } from '@/hooks/usePlayerData';
-import { SessionType } from '@/types/database.types';
+import { SessionType, getRequiredPlayers } from '@/types/database.types';
+import { toast } from "sonner";
+import { SessionManager } from '@/lib/data/session-manager';
 
 // Simple Alert component since we don't have a dedicated alert component
 const Alert = ({ className, children }: { className?: string, children: React.ReactNode }) => {
@@ -34,6 +37,17 @@ const Alert = ({ className, children }: { className?: string, children: React.Re
 // AlertDescription component
 const AlertDescription = ({ children }: { children: React.ReactNode }) => {
   return <div className="text-sm">{children}</div>;
+};
+
+// Define calibration configurations including duration and beep intervals
+// Moved here to be accessible for display logic
+const CALIBRATION_CONFIG: Partial<Record<SessionType, { durationMinutes: number; beepIntervalSeconds: number | null }>> = {
+  'pass_calibration':         { durationMinutes: 5, beepIntervalSeconds: 5 },
+  'groundball_calibration':   { durationMinutes: 5, beepIntervalSeconds: 5 },
+  'pass_catch_calibration':   { durationMinutes: 5, beepIntervalSeconds: 5 }, 
+  'shot_calibration':         { durationMinutes: 5, beepIntervalSeconds: 10 },
+  'faceoff_calibration':      { durationMinutes: 5, beepIntervalSeconds: 15 },
+  'cradle_calibration':       { durationMinutes: 5, beepIntervalSeconds: null }, // No beeps for cradle
 };
 
 // Simple spinner component since we don't have a dedicated spinner component
@@ -59,13 +73,26 @@ declare global {
   }
 }
 
+// Define all session types for the dropdown
+const ALL_SESSION_TYPES: SessionType[] = [
+  'solo',
+  'pass_calibration',
+  'pass_catch_calibration',
+  'groundball_calibration',
+  'shot_calibration',
+  'faceoff_calibration',
+  'cradle_calibration',
+  'passing_partners',
+  '2v2'
+];
+
 export function SimpleDeviceConnection() {
   const router = useRouter();
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [status, setStatus] = useState('Disconnected');
   const [sensorData, setSensorData] = useState<string[]>([]);
-  const [parsedSensorData, setParsedSensorData] = useState<any[]>([]);
+  const [parsedSensorData, setParsedSensorData] = useState<Record<string, any[]>>({});
   const [sessionName, setSessionName] = useState('');
   const [sessionNameError, setSessionNameError] = useState('');
   const [isStopping, setIsStopping] = useState(false);
@@ -83,15 +110,19 @@ export function SimpleDeviceConnection() {
   const setBeepAudioRef = useRef<HTMLAudioElement | null>(null);
   const timeoutIdsRef = useRef<number[]>([]);
   const timeoutCleanupRef = useRef<(() => void) | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [liveDuration, setLiveDuration] = useState<number>(0);
+  const [liveDataPoints, setLiveDataPoints] = useState<number>(0);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
+  const sessionStartTimeRef = useRef<number | null>(null);
+  const liveStatsIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   const { 
     isRecording, 
     recordingDuration, 
     dataPoints, 
-    startRecording, 
-    stopRecording, 
-    addDataPoint,
-    sessionId
+    stopRecording,
+    sessionId: contextSessionId
   } = useRecording();
   
   const portRef = useRef<any | null>(null);
@@ -102,22 +133,17 @@ export function SimpleDeviceConnection() {
   // Get player data
   const { players, isLoading: playersLoading } = usePlayerData();
   
-  // Sync isStreaming with isRecording
-  useEffect(() => {
-    if (isRecording && !isStreaming) {
-      console.log('Recording is active but streaming state is not. Updating streaming state.');
-      setIsStreaming(true);
-    } else if (!isRecording && isStreaming) {
-      console.log('Recording is not active but streaming state is. Updating streaming state.');
-      setIsStreaming(false);
-    }
-  }, [isRecording, isStreaming]);
+  // State for multiple player/device mappings
+  const [playerDeviceMappings, setPlayerDeviceMappings] = useState<{ playerId: string, deviceId: string }[]>([{ playerId: '', deviceId: '' }]);
+  const [playerDeviceErrors, setPlayerDeviceErrors] = useState<string[]>([]); // Array of errors, one per mapping
   
-  // Clean up on unmount
+  // Local SessionManager instance
+  const sessionManagerRef = useRef<SessionManager | null>(null);
+
+  // Initialize SessionManager on mount
   useEffect(() => {
-    return () => {
-      disconnectSerial();
-    };
+      sessionManagerRef.current = new SessionManager();
+      console.log("Local SessionManager initialized.");
   }, []);
   
   // Create audio elements for beep sounds
@@ -131,12 +157,13 @@ export function SimpleDeviceConnection() {
     if (readyBeepAudioRef.current) {
       readyBeepAudioRef.current.onerror = () => {
         console.warn('Ready beep sound file not found, using fallback');
-        // Use main beep as fallback
-        readyBeepAudioRef.current = new Audio('/sounds/beep.mp3');
-        if (readyBeepAudioRef.current) {
+        // Use main beep as fallback - try reassigning src and reloading
+        // Check ref is still valid inside the handler
+        if (readyBeepAudioRef.current) { 
+          readyBeepAudioRef.current.src = '/sounds/beep.mp3'; // Reassign src
           readyBeepAudioRef.current.volume = 0.7;
           readyBeepAudioRef.current.playbackRate = 0.8; // Slower for "Ready"
-          readyBeepAudioRef.current.load();
+          readyBeepAudioRef.current.load(); // Reload
         }
       };
     }
@@ -145,12 +172,13 @@ export function SimpleDeviceConnection() {
     if (setBeepAudioRef.current) {
       setBeepAudioRef.current.onerror = () => {
         console.warn('Set beep sound file not found, using fallback');
-        // Use main beep as fallback
-        setBeepAudioRef.current = new Audio('/sounds/beep.mp3');
-        if (setBeepAudioRef.current) {
+        // Use main beep as fallback - try reassigning src and reloading
+        // Check ref is still valid inside the handler
+        if (setBeepAudioRef.current) { 
+          setBeepAudioRef.current.src = '/sounds/beep.mp3'; // Reassign src
           setBeepAudioRef.current.volume = 0.8;
           setBeepAudioRef.current.playbackRate = 1.0; // Normal rate for "Set"
-          setBeepAudioRef.current.load();
+          setBeepAudioRef.current.load(); // Reload
         }
       };
     }
@@ -304,6 +332,48 @@ export function SimpleDeviceConnection() {
     }
   };
   
+  // Effect to update the number of player/device inputs based on session type
+  useEffect(() => {
+    const requiredPlayers = getRequiredPlayers(sessionType);
+    setPlayerDeviceMappings(currentMappings => {
+      const newMappings = Array(requiredPlayers).fill(null).map((_, index) => {
+        // Preserve existing mapping if possible, otherwise create new empty one
+        // Auto-assign device IDs 1, 2, 3... for simplicity?
+        const existingMapping = currentMappings[index];
+        return {
+           playerId: existingMapping?.playerId || '',
+           deviceId: existingMapping?.deviceId || String(index + 1) // Default to Device 1, 2, 3...
+        };
+      });
+      return newMappings;
+    });
+    // Reset errors when type changes
+    setPlayerDeviceErrors(Array(requiredPlayers).fill('')); 
+  }, [sessionType]);
+  
+  // Function to update a specific player/device mapping
+  const updatePlayerDeviceMapping = useCallback((index: number, field: 'playerId' | 'deviceId', value: string) => {
+    setPlayerDeviceMappings(prev => {
+      const newMappings = [...prev];
+      newMappings[index] = { ...newMappings[index], [field]: value };
+      return newMappings;
+    });
+    // Clear error for this specific input when changed
+    setPlayerDeviceErrors(prev => {
+        const newErrors = [...prev];
+        if (newErrors[index]) { // Only clear if there was an error
+            // More robust error clearing: check which field was updated
+            if (field === 'playerId' && newErrors[index].includes('Player')) {
+                newErrors[index] = newErrors[index].replace('Player required', '').replace(', ', '').trim();
+            }
+            if (field === 'deviceId' && newErrors[index].includes('Device')) {
+                newErrors[index] = newErrors[index].replace('Device required', '').replace(', ', '').trim();
+            }
+        }
+        return newErrors;
+    });
+  }, []);
+  
   async function connectSerial() {
     if (isConnected) {
       console.log('Already connected');
@@ -412,60 +482,62 @@ export function SimpleDeviceConnection() {
         
         lines.forEach(line => {
           line = line.trim();
-          console.log('Received:', line);
-          
+          // console.log('Received:', line); // Reduce console noise
+
           if (line.startsWith('DATA:')) {
-            setSensorData(prev => [...prev.slice(-99), line]);
-            
-            // Only process data if we're not in the process of stopping
+            setSensorData(prev => [...prev.slice(-99), line]); // Keep raw data view minimal
+
             if (!isStopping) {
               try {
-                // Extract data values from the line
                 const dataStr = line.substring(5).trim();
                 const values = dataStr.split(',').map(val => parseFloat(val.trim()));
-                
+
                 if (values.length >= 15) {
-                  console.log('Adding data point to recording with values:', values);
-                  
-                  // Parse the data for visualization with correct column mapping
-                  // Order: playerID, timestamp, battery, orientationX, orientationY, orientationZ, 
-                  // accelerationX, accelerationY, accelerationZ, gyroX, gyroY, gyroZ, magX, magY, magZ
-                  const parsedData = {
-                    timestamp: values[1] || 0,      // timestamp is column 2
-                    orientation_x: values[3] || 0,   // orientation starts at column 4
+                  const deviceId = String(values[0]);
+
+                  if (sessionManagerRef.current) {
+                    sessionManagerRef.current.addSensorData(values);
+                  } else {
+                    console.warn('Session Manager not available to add data point.');
+                  }
+
+                  const parsedDataPoint = {
+                    // No need for deviceId inside the point itself anymore
+                    timestamp: values[1] || 0,
+                    orientation_x: values[3] || 0,
                     orientation_y: values[4] || 0,
                     orientation_z: values[5] || 0,
-                    accelerometer_x: values[6] || 0, // acceleration starts at column 7
+                    accelerometer_x: values[6] || 0,
                     accelerometer_y: values[7] || 0,
                     accelerometer_z: values[8] || 0,
-                    gyroscope_x: values[9] || 0,    // gyroscope starts at column 10
+                    gyroscope_x: values[9] || 0,
                     gyroscope_y: values[10] || 0,
                     gyroscope_z: values[11] || 0,
-                    magnetometer_x: values[12] || 0, // magnetometer starts at column 13
+                    magnetometer_x: values[12] || 0,
                     magnetometer_y: values[13] || 0,
                     magnetometer_z: values[14] || 0,
                   };
-                  
-                  // Update the parsed sensor data for the graph
+
+                  // Update the state for the specific device ID
                   setParsedSensorData(prev => {
-                    const newData = [...prev, parsedData];
-                    // Keep only the last 100 data points for performance
-                    return newData.length > 100 ? newData.slice(-100) : newData;
+                    const currentDeviceData = prev[deviceId] || [];
+                    const newData = [...currentDeviceData, parsedDataPoint];
+                    // Keep only the last 100 points *per device*
+                    const trimmedData = newData.length > 100 ? newData.slice(-100) : newData;
+                    return {
+                      ...prev,
+                      [deviceId]: trimmedData,
+                    };
                   });
-                  
-                  addDataPoint(values).then(result => {
-                    console.log('Result of addDataPoint:', result);
-                  }).catch(err => {
-                    console.error('Error in addDataPoint:', err);
-                  });
+
                 } else {
-                  console.warn('Invalid data format, expected 15 values but got:', values.length);
+                  console.warn('Invalid data format, expected 15 values but got:', values.length, 'Line:', line);
                 }
               } catch (err) {
-                console.error('Error parsing data:', err);
+                console.error('Error parsing data:', err, 'Line:', line);
               }
             } else {
-              console.log('Ignoring data point while stopping session');
+              // console.log('Ignoring data point while stopping session'); // Reduce noise
             }
           }
         });
@@ -493,163 +565,141 @@ export function SimpleDeviceConnection() {
   
   // Function to start calibration timer if applicable
   const startCalibrationTimerIfNeeded = () => {
-    // Check if this is a calibration session
-    if (sessionType.includes('calibration')) {
-      // Configuration for different calibration types
-      const calibrationConfig = {
-        'pass_calibration': {
-          durationMinutes: 5,
-          beepIntervalSeconds: 5
-        },
-        'groundball_calibration': {
-          durationMinutes: 5,
-          beepIntervalSeconds: 5
-        },
-        // Can add more configurations for other calibration types here
-        // 'other_calibration_type': { durationMinutes: X, beepIntervalSeconds: Y }
-      };
+    // Get config for the current session type
+    const config = CALIBRATION_CONFIG[sessionType];
+
+    // Only proceed if it's a known calibration type with config
+    if (!config) {
+        console.log('Not a configured calibration session type, no timer/beeps needed.');
+        return () => {}; // Return empty cleanup
+    }
+
+    const CALIBRATION_DURATION_MS = config.durationMinutes * 60 * 1000;
+    const BEEP_INTERVAL_MS = config.beepIntervalSeconds ? config.beepIntervalSeconds * 1000 : null;
       
-      // Get configuration for this session type or use default
-      const config = calibrationConfig[sessionType as keyof typeof calibrationConfig] || {
-        durationMinutes: 5, // Default 5 minutes
-        beepIntervalSeconds: 5 // Default 5 second beep interval
-      };
-      
-      const CALIBRATION_DURATION_MS = config.durationMinutes * 60 * 1000;
-      const BEEP_INTERVAL_MS = config.beepIntervalSeconds * 1000;
-      
-      // Calculate end time from now
-      const startTime = Date.now();
-      const endTime = startTime + CALIBRATION_DURATION_MS;
-      
-      // Set initial time remaining
-      setCalibrationTimeRemaining(CALIBRATION_DURATION_MS / 1000);
-      
-      // Clear any existing timers
-      if (calibrationTimerRef.current) {
-        clearInterval(calibrationTimerRef.current);
-      }
-      if (beepTimerRef.current) {
-        clearInterval(beepTimerRef.current);
-      }
-      if (firstBeepTimeoutRef.current) {
-        clearTimeout(firstBeepTimeoutRef.current);
-      }
-      
-      // Clean up any existing timeouts
-      timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
-      timeoutIdsRef.current = [];
-      
-      // Start the countdown timer
-      calibrationTimerRef.current = setInterval(() => {
-        const now = Date.now();
-        const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
-        setCalibrationTimeRemaining(remaining);
-        
-        // Auto-stop when timer reaches 0
-        if (remaining === 0) {
-          clearInterval(calibrationTimerRef.current!);
-          calibrationTimerRef.current = null;
-          
-          // Also clear beep timer
-          if (beepTimerRef.current) {
-            clearInterval(beepTimerRef.current);
-            beepTimerRef.current = null;
-          }
-          
-          // Clear first beep timeout if it exists
-          if (firstBeepTimeoutRef.current) {
-            clearTimeout(firstBeepTimeoutRef.current);
-            firstBeepTimeoutRef.current = null;
-          }
-          
-          // Only stop if still streaming
-          if (isStreaming && !isStopping) {
-            console.log('Calibration timer complete. Auto-stopping session.');
-            // Use setTimeout to ensure this runs after the current execution context
-            setTimeout(() => {
-              handleStopStreaming();
-            }, 0);
-          }
-        }
-      }, 1000);
-      
-      console.log(`Started calibration timer for ${CALIBRATION_DURATION_MS / 1000} seconds`);
-      
-      // Track all timeout IDs for potential cleanup
-      const timeoutIds: number[] = [];
-      
-      // Schedule all beeps at fixed timepoints based on the start time
-      const scheduleAllBeeps = () => {
-        // Add a little buffer time to ensure the first beep sequence timing is accurate
-        const startTime = Date.now() + 50; // Add 50ms buffer to account for scheduling delays
-        
-        // Calculate the total number of beeps needed
-        const totalBeepsNeeded = Math.floor(CALIBRATION_DURATION_MS / BEEP_INTERVAL_MS);
-        console.log(`Scheduling ${totalBeepsNeeded} beep sequences`);
-        
-        // Schedule all the beeps at once with precise timing
-        for (let i = 0; i < totalBeepsNeeded; i++) {
-          // Calculate the exact time for this beep from the start
-          const beepTime = startTime + (i + 1) * BEEP_INTERVAL_MS;
-          const readyTime = beepTime - 1000; // 1 second before the beep
-          const setTime = beepTime - 500; // 0.5 seconds before the beep
-          
-          // Log the first few beeps for debugging
-          if (i < 3) {
-            const nowMs = Date.now();
-            console.log(`Scheduling beep ${i+1}: Ready at +${readyTime - nowMs}ms, Set at +${setTime - nowMs}ms, Go at +${beepTime - nowMs}ms`);
-          }
-          
-          // Schedule the Ready beep
-          const readyTimeoutId = window.setTimeout(() => {
-            // Only play if not stopping and component is still mounted
-            if (!isStopping && mainBeepAudioRef.current) {
-              console.log(`Playing Ready beep ${i+1} at ${Date.now()}`);
-              playReadyBeep();
-            }
-          }, readyTime - Date.now());
-          timeoutIds.push(readyTimeoutId);
-          
-          // Schedule the Set beep
-          const setTimeoutId = window.setTimeout(() => {
-            // Only play if not stopping and component is still mounted
-            if (!isStopping && mainBeepAudioRef.current) {
-              console.log(`Playing Set beep ${i+1} at ${Date.now()}`);
-              playSetBeep();
-            }
-          }, setTime - Date.now());
-          timeoutIds.push(setTimeoutId);
-          
-          // Schedule the Go beep
-          const goTimeoutId = window.setTimeout(() => {
-            // Only play if not stopping and component is still mounted
-            if (!isStopping && mainBeepAudioRef.current) {
-              console.log(`Playing Go beep ${i+1} at ${Date.now()}`);
-              playMainBeep();
-            }
-          }, beepTime - Date.now());
-          timeoutIds.push(goTimeoutId);
-        }
-      };
-      
-      // Store the timeouts in our component-level ref
-      timeoutIdsRef.current = timeoutIds;
-      
-      // Start scheduling all the beeps
-      scheduleAllBeeps();
-      
-      // Return a cleanup function that will be called when the component unmounts
-      // or when the session is stopped
-      return () => {
-        // Clear all timeout IDs
-        timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
-        timeoutIdsRef.current = [];
-      };
+    console.log(`Starting calibration timer for ${sessionType}. Duration: ${config.durationMinutes} min. Beep Interval: ${config.beepIntervalSeconds}s`);
+
+    // Calculate end time from now
+    const startTime = Date.now();
+    const endTime = startTime + CALIBRATION_DURATION_MS;
+    
+    // Set initial time remaining
+    setCalibrationTimeRemaining(CALIBRATION_DURATION_MS / 1000);
+    
+    // Clear any existing timers
+    if (calibrationTimerRef.current) {
+      clearInterval(calibrationTimerRef.current);
+    }
+    if (beepTimerRef.current) {
+      clearInterval(beepTimerRef.current);
+    }
+    if (firstBeepTimeoutRef.current) {
+      clearTimeout(firstBeepTimeoutRef.current);
     }
     
-    // Return empty cleanup if not a calibration session
-    return () => {};
+    // Clean up any existing timeouts
+    timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
+    timeoutIdsRef.current = [];
+    
+    // Start the countdown timer
+    calibrationTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      const remaining = Math.max(0, Math.floor((endTime - now) / 1000));
+      setCalibrationTimeRemaining(remaining);
+      
+      // Auto-stop when timer reaches 0
+      if (remaining === 0) {
+        clearInterval(calibrationTimerRef.current!);
+        calibrationTimerRef.current = null;
+        
+        // Also clear beep timer
+        if (beepTimerRef.current) {
+          clearInterval(beepTimerRef.current);
+          beepTimerRef.current = null;
+        }
+        
+        // Clear first beep timeout if it exists
+        if (firstBeepTimeoutRef.current) {
+          clearTimeout(firstBeepTimeoutRef.current);
+          firstBeepTimeoutRef.current = null;
+        }
+        
+        // Only stop if still streaming
+        if (isStreaming && !isStopping) {
+          console.log('Calibration timer complete. Auto-stopping session.');
+          // Use setTimeout to ensure this runs after the current execution context
+          setTimeout(() => {
+            handleStopStreaming();
+          }, 0);
+        }
+      }
+    }, 1000);
+    
+    console.log(`Started calibration timer for ${CALIBRATION_DURATION_MS / 1000} seconds`);
+    
+    // Track all timeout IDs for potential cleanup
+    const timeoutIds: number[] = [];
+    
+    // Schedule beeps only if an interval is defined
+    if (BEEP_INTERVAL_MS) {
+        console.log(`Scheduling beeps every ${BEEP_INTERVAL_MS}ms`);
+        const scheduleAllBeeps = () => {
+          // Add a little buffer time to ensure the first beep sequence timing is accurate
+          const scheduleStartTime = Date.now() + 50; // Add 50ms buffer to account for scheduling delays
+          
+          // Calculate the total number of beeps needed
+          const totalBeepsNeeded = Math.floor(CALIBRATION_DURATION_MS / BEEP_INTERVAL_MS);
+          console.log(`Scheduling ${totalBeepsNeeded} beep sequences`);
+          
+          // Schedule all the beeps at once with precise timing
+          for (let i = 0; i < totalBeepsNeeded; i++) {
+            // Calculate the exact time for this beep from the start
+            const beepTime = scheduleStartTime + (i + 1) * BEEP_INTERVAL_MS;
+            const readyTime = beepTime - 1000; // 1 second before the beep
+            const setTime = beepTime - 500; // 0.5 seconds before the beep
+            
+            // Log the first few beeps for debugging
+            if (i < 3) {
+              const nowMs = Date.now();
+              console.log(`Scheduling beep ${i+1}: Ready at +${readyTime - nowMs}ms, Set at +${setTime - nowMs}ms, Go at +${beepTime - nowMs}ms`);
+            }
+            
+            // Schedule the Ready beep
+            const readyTimeoutId = window.setTimeout(() => {
+               if (!isStopping && mainBeepAudioRef.current) { playReadyBeep(); }
+            }, readyTime - Date.now());
+            timeoutIds.push(readyTimeoutId);
+            
+            // Schedule the Set beep
+            const setTimeoutId = window.setTimeout(() => {
+               if (!isStopping && mainBeepAudioRef.current) { playSetBeep(); }
+            }, setTime - Date.now());
+            timeoutIds.push(setTimeoutId);
+            
+            // Schedule the Go beep
+            const goTimeoutId = window.setTimeout(() => {
+              if (!isStopping && mainBeepAudioRef.current) { playMainBeep(); }
+            }, beepTime - Date.now());
+            timeoutIds.push(goTimeoutId);
+          }
+        };
+        
+        // Store the timeouts in our component-level ref
+        timeoutIdsRef.current = timeoutIds;
+        
+        // Start scheduling all the beeps
+        scheduleAllBeeps();
+    } else {
+        console.log('No beep interval defined for this session type.');
+    }
+      
+    // Return a cleanup function that will be called when the component unmounts
+    // or when the session is stopped
+    return () => {
+      // Clear all timeout IDs
+      timeoutIdsRef.current.forEach(id => window.clearTimeout(id));
+      timeoutIdsRef.current = [];
+    };
   };
   
   // Monitor calibration timer
@@ -668,88 +718,148 @@ export function SimpleDeviceConnection() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
   
+  // Updated handleStartStreaming function
   async function handleStartStreaming() {
     if (!isConnected) {
       console.error('Cannot start streaming: not connected to device');
       return;
     }
-    
-    // Validate session name
-    const isValid = await validateSessionName();
-    if (!isValid) {
+
+    // Reset session ID state
+    setCurrentSessionId(null); 
+
+    // 1. Validate session name
+    const isNameValid = await validateSessionName();
+    if (!isNameValid) {
       return;
     }
-    
-    // Validate player selection
-    if (!selectedPlayerId) {
-      setPlayerSelectionError('Please select a player profile');
-      return;
-    }
-    
     setSessionNameError('');
-    setPlayerSelectionError('');
-    
+
+    // 2. Validate all player/device mappings
+    let allMappingsValid = true;
+    const currentErrors = Array(playerDeviceMappings.length).fill('');
+    playerDeviceMappings.forEach((mapping, index) => {
+      if (!mapping.playerId) {
+        currentErrors[index] = 'Player required';
+        allMappingsValid = false;
+      }
+      if (!mapping.deviceId) {
+        currentErrors[index] = currentErrors[index] ? currentErrors[index] + ', Device required' : 'Device required';
+        allMappingsValid = false;
+      }
+    });
+    setPlayerDeviceErrors(currentErrors);
+
+    if (!allMappingsValid) {
+      console.error('Player/Device mappings are incomplete.');
+      toast.error('Please select a player and device for each required input.'); // User feedback
+      return;
+    }
+
+    // 3. Create Session via service
     try {
-      console.log('Starting recording session with name:', sessionName);
-      
-      // Create a new session with player-device mapping
-      // Pass skipNameCheck=true since we've already validated the name above
-      const session = await createSessionWithPlayerDevice(
-        {
-          name: sessionName,
-          session_type: sessionType
-        },
-        selectedPlayerId,
-        deviceId,
-        true // Skip name check since we already did it
-      );
-      
-      console.log('Session created with player-device mapping:', session);
-      
-      // Start recording session using the EXISTING session ID to avoid recreating it
-      const recordingStarted = await startRecording(sessionName, session.id);
-      console.log('Recording started:', recordingStarted);
-      
-      if (!recordingStarted) {
-        console.error('Failed to start recording session');
-        return;
+      console.log('Creating session with name:', sessionName, 'Type:', sessionType);
+      const session = await createSession({
+        name: sessionName.trim(), // Trim name
+        session_type: sessionType,
+        start_time: new Date().toISOString(),
+      }, true); // Skip name check as we did it already
+
+      if (!session.id) {
+        throw new Error("Session creation failed to return an ID.");
+      }
+      const newSessionId = session.id;
+      setCurrentSessionId(newSessionId); 
+      console.log('Session created:', session);
+
+      // 4. Add Player Mappings via service
+      console.log('Adding player mappings:', playerDeviceMappings);
+      await addSessionPlayersBatch(newSessionId, playerDeviceMappings);
+      console.log('Player mappings added successfully.');
+
+      // 4.5 Initialize the local SessionManager for this session
+      if (sessionManagerRef.current) {
+         sessionManagerRef.current.initializeSession(newSessionId, playerDeviceMappings);
+         const startTime = sessionManagerRef.current.sessionStartTime;
+         setSessionStartTime(startTime); // Set state
+         sessionStartTimeRef.current = startTime; // Set ref
+         console.log('[handleStartStreaming] Session Manager Start Time:', startTime);
+         // Use a timeout to check state after potential batching
+         setTimeout(() => {
+           console.log('[handleStartStreaming] Local sessionStartTime State:', sessionStartTime);
+         }, 0);
+      } else {
+         console.error("Session Manager not initialized!");
+         throw new Error("Session Manager failed to initialize.");
       }
       
-      // Then send start command to the device
-      await sendCommand('start');
-      
-      // Set streaming state
+      // 5. Send start command to device(s)
+      // TODO: Need to map playerDeviceMappings to actual serial commands if multiple physical devices exist
+      await sendCommand('start'); 
+      console.log('Sent start command.')
+
+      // 6. Update UI State
+      console.log('Setting isStreaming to true in handleStartStreaming...');
       setIsStreaming(true);
-      console.log('Streaming started. isStreaming:', true);
-      
-      // Set isStopping to false to ensure beeps will play
-      setIsStopping(false);
-      
-      // Start calibration timer if this is a calibration session
-      // and store the cleanup function
+      console.log('Streaming started (UI state).');
+      setIsStopping(false); // Ensure beeps can play
+      setParsedSensorData({}); // Clear old graph data (now an object)
+      setLiveDuration(0); // Reset live stats
+      setLiveDataPoints(0); // Reset live stats
+
+      // TODO: Start updated calibration timer logic
       timeoutCleanupRef.current = startCalibrationTimerIfNeeded();
+      console.log("Started calibration timer/beep logic if applicable.");
+
+      // Start interval timer to update live stats
+      if (liveStatsIntervalRef.current) clearInterval(liveStatsIntervalRef.current);
+      liveStatsIntervalRef.current = setInterval(() => {
+        const startTimeFromRef = sessionStartTimeRef.current;
+        // console.log('[Interval] Timer fired. StartTime from Ref:', startTimeFromRef);
+        if (sessionManagerRef.current && startTimeFromRef) { // Check ref
+          // Calculate duration based on local start time
+          const durationSeconds = (Date.now() - startTimeFromRef) / 1000;
+          // Get cumulative points received from manager
+          const points = sessionManagerRef.current.getTotalPointsReceived();
+          // console.log('[Interval] Calculated Duration:', durationSeconds, 'Calculated Points:', points);
+          setLiveDuration(durationSeconds);
+          setLiveDataPoints(points);
+        } else {
+          // console.log('[Interval] Condition failed (sessionManagerRef or startTimeFromRef missing).');
+        }
+      }, 100); // Update every 100ms for smoother duration
+
     } catch (error) {
-      console.error('Error starting streaming:', error);
-      // If there was an error, stop the recording
-      await stopRecording();
+      console.error('Error starting session or mappings:', error);
+      toast.error(`Failed to start session: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setCurrentSessionId(null); // Clear session ID on error
+      setIsStreaming(false); // Ensure UI reflects failure
+      // Clear stats interval on failure
+      if (liveStatsIntervalRef.current) {
+        clearInterval(liveStatsIntervalRef.current);
+        liveStatsIntervalRef.current = null;
+      }
+      setLiveDuration(0);
+      setLiveDataPoints(0);
+      setSessionStartTime(null); // Reset local start time
+      sessionStartTimeRef.current = null; // Reset ref
     }
   }
   
   const handleStopStreaming = async () => {
-    if (!isConnected) {
+    if (!isConnected || isStopping) {
+      // Check isStopping here too
+      console.log(`Stop requested but already stopping (${isStopping}) or not connected (${!isConnected})`);
       return;
     }
-    
-    // Prevent multiple stop attempts
-    if (isStopping) {
-      console.log('Already stopping, ignoring duplicate request');
-      return;
-    }
+
+    let stopError: Error | null = null; 
+    const intendedEndTime = new Date(); // Record end time *before* async operations
     
     try {
-      // Set stopping state immediately
       setIsStopping(true);
-      
+      setIsRedirecting(true); // Show saving screen immediately
+      console.log('HANDLE STOP: Stopping UI & Clearing Timers...');
       // Immediately stop all audio playback
       if (mainBeepAudioRef.current) {
         mainBeepAudioRef.current.pause();
@@ -796,37 +906,76 @@ export function SimpleDeviceConnection() {
         timeoutCleanupRef.current = null;
       }
       
-      console.log('Stopping session...');
-      setIsRedirecting(true);
-      
-      // Send stop command to the device first
+      console.log('HANDLE STOP: Sending stop command to device...');
       await sendCommand('stop');
       
-      // Stop recording if it's active
-      if (isRecording) {
-        console.log('Stopping recording...');
-        await stopRecording();
+      // End the session in SessionManager (flushes final data)
+      console.log('HANDLE STOP: Ending session manager, passing intended end time:', intendedEndTime.toISOString());
+      if (sessionManagerRef.current) {
+        try {
+            // Pass intendedEndTime to endSession
+            await sessionManagerRef.current.endSession(intendedEndTime);
+            console.log("HANDLE STOP: SessionManager ended session successfully.");
+        } catch (smError) {
+            console.error("HANDLE STOP: Error ending session in SessionManager:", smError);
+            stopError = smError instanceof Error ? smError : new Error(String(smError));
+            toast.error(`Error saving session data: ${stopError.message}`);
+        }
+      } else {
+          console.warn("HANDLE STOP: Session Manager ref was null.");
       }
+
+      // Stop recording context (if needed - currently seems unused here)
+      // await stopRecording();
       
-      // Stop streaming and clear data
+      // Stop streaming UI state and clear local UI data
+      console.log('HANDLE STOP: Resetting UI state...');
       setIsStreaming(false);
       setSensorData([]);
-      setParsedSensorData([]);
+      setParsedSensorData({}); // Reset graph data object
       setSessionName('');
+      setLiveDuration(0); // Also reset live stats display
+      setLiveDataPoints(0);
+      setSessionStartTime(null); // Reset local start time
+      sessionStartTimeRef.current = null; // Reset ref
       
-      console.log('Session stopped, waiting for data processing...');
+      console.log('HANDLE STOP: Session processing complete.');
       
-      // Wait for 5 seconds to ensure session is processed
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      console.log('Redirecting to session details...');
-      // Redirect to the session page or devices page
-      window.location.href = sessionId ? `/sessions/${sessionId}` : '/devices';
+      // Add a delay before redirecting ONLY IF no error occurred
+      if (!stopError) {
+          console.log('HANDLE STOP: Waiting briefly before redirect...');
+          await new Promise(resolve => setTimeout(resolve, 5000)); // Reduced delay to 5 seconds
+          
+          // Redirect ONLY if no error occurred
+          console.log('HANDLE STOP: Redirecting...', currentSessionId); 
+          if (currentSessionId) {
+              window.location.href = `/sessions/${currentSessionId}`;
+          } else {
+              console.warn('No current session ID available to redirect to.');
+              window.location.href = '/devices'; // Fallback
+          }
+      } else {
+          console.log('HANDLE STOP: Error occurred, not redirecting automatically.');
+          // Keep the user on the page to see the error state/logs
+          setIsRedirecting(false); // Ensure loading spinner stops
+      }
       
     } catch (error) {
-      console.error('Error stopping session:', error);
-      setIsRedirecting(false);
-      setIsStopping(false);
+       console.error('HANDLE STOP: Unexpected error in stop handler:', error);
+       stopError = error instanceof Error ? error : new Error(String(error));
+       toast.error(`Error stopping session: ${stopError.message}`);
+       setIsRedirecting(false); // Ensure loading spinner stops
+    } finally {
+       console.log(`HANDLE STOP: Final cleanup. Error occurred: ${!!stopError}`);
+       setIsStopping(false); // Allow trying again if needed
+       // Don't clear currentSessionId if there was an error, maybe needed for retry?
+       if (!stopError) { 
+          setCurrentSessionId(null); 
+       }
+       setSessionStartTime(null); // Reset local start time
+       sessionStartTimeRef.current = null; // Reset ref
+       // Do NOT clear currentSessionId here if an error happened
+       // so the user can potentially retry or see which session failed
     }
   };
   
@@ -838,7 +987,7 @@ export function SimpleDeviceConnection() {
     try {
       await sendCommand('reset');
       setSensorData([]);
-      setParsedSensorData([]);
+      setParsedSensorData({});
     } catch (error) {
       console.error('Error resetting device:', error);
     }
@@ -848,13 +997,36 @@ export function SimpleDeviceConnection() {
   useEffect(() => {
     setIsStreaming(false);
     setSensorData([]);
-    setParsedSensorData([]);
+    setParsedSensorData({}); // Reset graph data object
     setSessionName('');
     setSessionNameError('');
     setIsStopping(false);
     setIsRedirecting(false);
+    setLiveDuration(0);
+    setLiveDataPoints(0);
+    setSessionStartTime(null); // Reset local start time
+    sessionStartTimeRef.current = null; // Reset ref
+    // Ensure interval is cleared on initial load/navigation
+    if (liveStatsIntervalRef.current) {
+        clearInterval(liveStatsIntervalRef.current);
+        liveStatsIntervalRef.current = null;
+    }
   }, []);
   
+  // Cleanup interval on unmount
+  useEffect(() => {
+      return () => {
+          if (liveStatsIntervalRef.current) {
+              clearInterval(liveStatsIntervalRef.current);
+              liveStatsIntervalRef.current = null;
+              console.log('Cleaned up live stats interval on unmount.');
+          }
+          // Reset start time on unmount as well
+          setSessionStartTime(null);
+          sessionStartTimeRef.current = null; // Reset ref
+      };
+  }, []); // Empty dependency array ensures this runs only on mount and unmount
+
   // Available device IDs
   const deviceIds = ['1', '2', '3', '4', '5'];
   
@@ -867,7 +1039,9 @@ export function SimpleDeviceConnection() {
             {status}
           </Badge>
         </CardHeader>
-        <CardContent className="space-y-6">
+        <CardContent 
+          className={`space-y-6 ${isStreaming ? 'overflow-y-auto max-h-[calc(100vh-250px)]' : ''}`}
+        >
           {isRedirecting ? (
             <div className="flex flex-col items-center justify-center py-8">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4"></div>
@@ -927,83 +1101,131 @@ export function SimpleDeviceConnection() {
                         <SelectValue placeholder="Select session type" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="solo">Solo Practice</SelectItem>
-                        <SelectItem value="pass_calibration">Pass Calibration</SelectItem>
-                        <SelectItem value="groundball_calibration">Ground Ball Calibration</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Select calibration session for collecting reference data
-                    </p>
-                    {sessionType.includes('calibration') && (
-                      <p className="text-xs text-orange-500 mt-1">
-                        Note: Calibration sessions will automatically end after 5 minutes
-                      </p>
-                    )}
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="deviceId">Device ID</Label>
-                    <Select
-                      value={deviceId}
-                      onValueChange={setDeviceId}
-                    >
-                      <SelectTrigger id="deviceId">
-                        <SelectValue placeholder="Select device ID" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {deviceIds.map(id => (
-                          <SelectItem key={id} value={id}>
-                            Device {id}
-                          </SelectItem>
+                        {ALL_SESSION_TYPES.map(type => (
+                           <SelectItem key={type} value={type}>
+                             {formatSessionType(type)}
+                           </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                   
-                  <div className="space-y-2">
-                    <Label htmlFor="playerSelect">Player Profile</Label>
-                    <Select
-                      value={selectedPlayerId}
-                      onValueChange={(value) => {
-                        setSelectedPlayerId(value);
-                        setPlayerSelectionError('');
-                      }}
-                    >
-                      <SelectTrigger id="playerSelect" className={playerSelectionError ? 'border-red-500' : ''}>
-                        <SelectValue placeholder="Select a player" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {playersLoading ? (
-                          <SelectItem value="loading" disabled>Loading players...</SelectItem>
-                        ) : players.length === 0 ? (
-                          <SelectItem value="none" disabled>No players available</SelectItem>
-                        ) : (
-                          players.map(player => (
-                            <SelectItem key={player.id} value={player.id}>
-                              {player.name}
-                            </SelectItem>
-                          ))
+                  {/* Session Type Details Display */}
+                  {(sessionType.includes('calibration') || sessionType === 'pass_catch_calibration' || sessionType === 'shot_calibration') && (
+                     <div className="p-3 border rounded bg-muted/20 text-sm text-muted-foreground space-y-1">
+                        <p className="font-medium text-foreground">Session Details:</p>
+                        {/* Display Duration/Beeps for Calibration Types */}
+                        {CALIBRATION_CONFIG[sessionType] && (
+                            <> 
+                                <p>Duration: {CALIBRATION_CONFIG[sessionType]?.durationMinutes} minutes</p>
+                                {CALIBRATION_CONFIG[sessionType]?.beepIntervalSeconds !== null ? (
+                                    <p>Beep Interval: Every {CALIBRATION_CONFIG[sessionType]?.beepIntervalSeconds} seconds</p>
+                                ) : (
+                                    <p>Beep Interval: None</p>
+                                )}
+                            </>
                         )}
-                      </SelectContent>
-                    </Select>
-                    {playerSelectionError && (
-                      <p className="text-sm text-red-500">{playerSelectionError}</p>
-                    )}
-                    {players.length === 0 && !playersLoading && (
-                      <Alert className="mt-2">
-                        <AlertDescription>
-                          No player profiles found. Please create a player profile first.
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
+                        
+                        {/* Role Assignment Logic */}
+                        {(sessionType === 'pass_catch_calibration' || sessionType === 'shot_calibration') && playerDeviceMappings.length === 2 && (
+                            () => {
+                                // Ensure device IDs are valid numbers for comparison
+                                const id1 = parseInt(playerDeviceMappings[0].deviceId || '-1', 10);
+                                const id2 = parseInt(playerDeviceMappings[1].deviceId || '-1', 10);
+                                const player1Name = players.find(p => p.id === playerDeviceMappings[0].playerId)?.name || 'Player 1';
+                                const player2Name = players.find(p => p.id === playerDeviceMappings[1].playerId)?.name || 'Player 2';
+
+                                if (id1 === -1 || id2 === -1) {
+                                    return <p>Assign Device IDs to determine roles.</p>;
+                                }
+
+                                const playerWithLowerId = id1 < id2 ? player1Name : player2Name;
+                                const playerWithHigherId = id1 < id2 ? player2Name : player1Name;
+                                const lowerDeviceId = id1 < id2 ? id1 : id2;
+                                const higherDeviceId = id1 < id2 ? id2 : id1;
+
+                                if (sessionType === 'pass_catch_calibration') {
+                                    return (
+                                        <>
+                                            <p>{playerWithLowerId} (Device {lowerDeviceId}) is First Thrower.</p>
+                                            <p>{playerWithHigherId} (Device {higherDeviceId}) is First Catcher.</p>
+                                        </>
+                                    );
+                                }
+                                if (sessionType === 'shot_calibration') {
+                                    return (
+                                        <>
+                                            <p>{playerWithLowerId} (Device {lowerDeviceId}) is the Shooter.</p>
+                                            <p>{playerWithHigherId} (Device {higherDeviceId}) is the Goalie.</p>
+                                        </>
+                                    );
+                                }
+                                return null; // Should not happen
+                            }
+                        )()}{/* End Role Assignment Logic */}
+                     </div>
+                  )}
+                  
+                  {/* Dynamic Player/Device Inputs */}
+                  {playerDeviceMappings.map((mapping, index) => (
+                    <div key={index} className="p-3 border rounded space-y-3 bg-muted/40">
+                       <Label className="font-semibold">Player {index + 1}</Label>
+                       {playerDeviceErrors[index] && (
+                           <p className="text-sm text-red-500">Error: {playerDeviceErrors[index]}</p>
+                       )}
+                       <div className="grid grid-cols-2 gap-4">
+                         <div className="space-y-1">
+                            <Label htmlFor={`deviceId-${index}`}>Device ID</Label>
+                            <Select
+                              value={mapping.deviceId}
+                              onValueChange={(value) => updatePlayerDeviceMapping(index, 'deviceId', value)}
+                            >
+                              <SelectTrigger id={`deviceId-${index}`} className={playerDeviceErrors[index]?.includes('Device') ? 'border-red-500' : ''}>
+                                <SelectValue placeholder="Select device" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {deviceIds.map(id => (
+                                  <SelectItem key={id} value={id}>
+                                    Device {id}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                         </div>
+                         <div className="space-y-1">
+                            <Label htmlFor={`playerSelect-${index}`}>Player Profile</Label>
+                            <Select
+                              value={mapping.playerId}
+                              onValueChange={(value) => updatePlayerDeviceMapping(index, 'playerId', value)}
+                            >
+                              <SelectTrigger id={`playerSelect-${index}`} className={playerDeviceErrors[index]?.includes('Player') ? 'border-red-500' : ''}>
+                                <SelectValue placeholder="Select player" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {playersLoading ? (
+                                  <SelectItem value="loading" disabled>Loading...</SelectItem>
+                                ) : players.length === 0 ? (
+                                  <SelectItem value="none" disabled>No players</SelectItem>
+                                ) : (
+                                  players.map(player => (
+                                    <SelectItem key={player.id} value={player.id}>
+                                      {player.name}
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+                         </div>
+                       </div>
+                    </div>
+                  ))}
                   
                   <div className="flex gap-2">
                     <Button
                       className="flex-1"
                       onClick={handleStartStreaming}
-                      disabled={!sessionName.trim() || !selectedPlayerId || playersLoading}
+                      // Disable if name missing or any mapping is incomplete
+                      disabled={!sessionName.trim() || playerDeviceMappings.some(m => !m.playerId || !m.deviceId) || playersLoading || !isConnected}
                     >
                       <Play className="mr-2 h-4 w-4" />
                       Start Session
@@ -1024,10 +1246,10 @@ export function SimpleDeviceConnection() {
                     <div>
                       <h3 className="font-medium">{sessionName}</h3>
                       <p className="text-sm text-muted-foreground">
-                        Duration: {formatDuration(recordingDuration)}
+                        Duration: {formatDuration(liveDuration)}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        Data Points: {dataPoints}
+                        Data Points: {liveDataPoints}
                       </p>
                       {sessionType.includes('calibration') && calibrationTimeRemaining !== null && (
                         <p className="text-sm font-medium text-orange-500">
@@ -1054,7 +1276,28 @@ export function SimpleDeviceConnection() {
                     </div>
                   </div>
                   
-                  <LiveDataGraph data={parsedSensorData} maxPoints={100} />
+                  {/* Render a graph for each player/device mapping */}
+                  <div className="space-y-4">
+                    {playerDeviceMappings.map((mapping, index) => {
+                      const player = players.find(p => p.id === mapping.playerId);
+                      const playerName = player ? player.name : 'Unknown Player';
+                      const deviceData = parsedSensorData[mapping.deviceId] || [];
+                      const graphTitle = `${playerName} (Device ${mapping.deviceId})`;
+
+                      return (
+                        <div key={mapping.deviceId || index} className="p-3 border rounded bg-muted/20">
+                          <h4 className="text-sm font-semibold mb-2">{graphTitle}</h4>
+                          <LiveDataGraph
+                            data={deviceData}
+                            maxPoints={100} 
+                            // Pass title if LiveDataGraph supports it, otherwise handled by h4 above
+                            // title={graphTitle} 
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* <LiveDataGraph data={parsedSensorData} maxPoints={100} /> Remove the single graph */}
                 </div>
               )}
             </div>

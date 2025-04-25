@@ -16,7 +16,7 @@ export interface Database {
           device_id: string | null;
           created_at: string;
           stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
-          position: 'attack' | 'midfield' | 'defense' | 'goalie';
+          position: 'attack' | 'midfield' | 'defense' | 'goalie' | 'faceoff';
           strong_hand: 'left' | 'right';
           updated_at: string;
         };
@@ -26,7 +26,7 @@ export interface Database {
           device_id?: string | null;
           created_at?: string;
           stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
-          position: 'attack' | 'midfield' | 'defense' | 'goalie';
+          position: 'attack' | 'midfield' | 'defense' | 'goalie' | 'faceoff';
           strong_hand: 'left' | 'right';
           updated_at?: string;
         };
@@ -36,7 +36,7 @@ export interface Database {
           device_id?: string | null;
           created_at?: string;
           stick_type?: 'short-stick' | 'long-stick' | 'goalie-stick';
-          position?: 'attack' | 'midfield' | 'defense' | 'goalie';
+          position?: 'attack' | 'midfield' | 'defense' | 'goalie' | 'faceoff';
           strong_hand?: 'left' | 'right';
           updated_at?: string;
         };

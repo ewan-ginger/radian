@@ -182,24 +182,26 @@ export async function updateSession(id: string, updates: SessionUpdate): Promise
 }
 
 /**
- * End a session by setting its end_time to the current time and calculating duration
+ * End a session by setting its end_time to the provided time and calculating duration
  * @param id Session ID
+ * @param intendedEndTime The Date object representing when the session should end.
  * @returns The updated session
  */
-export async function endSession(id: string): Promise<Session> {
+export async function endSession(id: string, intendedEndTime: Date): Promise<Session> {
   // Get the session to calculate duration
   const session = await getSessionById(id);
   if (!session) {
     throw new Error('Session not found');
   }
 
-  const endTime = new Date();
+  // Use the provided end time
+  const endTime = intendedEndTime;
   const startTime = new Date(session.start_time);
   
   // Calculate duration in seconds
-  const durationSeconds = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
+  const durationSeconds = Math.max(0, Math.floor((endTime.getTime() - startTime.getTime()) / 1000));
   
-  console.log('Ending session:', {
+  console.log('Ending session (service):', {
     id,
     startTime: startTime.toISOString(),
     endTime: endTime.toISOString(),
@@ -207,22 +209,27 @@ export async function endSession(id: string): Promise<Session> {
   });
   
   // Use raw SQL to update both end_time and duration
+  // Ensure the function `update_session_duration` uses the provided end time
+  // If the RPC function doesn't accept end_time, we might need to modify it
+  // or fall back to a simple update.
   const { data, error } = await supabaseClient.rpc('update_session_duration', {
     session_id: id,
+    end_time_param: endTime.toISOString(), // Assuming RPC accepts end_time
     duration_seconds: durationSeconds
   });
 
   if (error) {
-    console.error(`Error updating session for ID ${id}:`, { error, durationSeconds });
+    console.error(`Error updating session via RPC for ID ${id}:`, { error, endTime: endTime.toISOString(), durationSeconds });
     
-    // Fall back to regular update without duration
-    console.log('Falling back to regular update without duration');
+    // Fall back to regular update using the intendedEndTime
+    console.log('Falling back to regular update with intended end time');
     return updateSession(id, { 
       end_time: endTime.toISOString()
+      // Note: Duration won't be set in this fallback unless updateSession also handles it
     });
   }
 
-  console.log('Session updated successfully with duration');
+  console.log('Session updated successfully via RPC with duration');
   
   // Fetch the updated session
   const updatedSession = await getSessionById(id);

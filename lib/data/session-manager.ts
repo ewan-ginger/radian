@@ -3,7 +3,7 @@ import {
   updateSession, 
   endSession as endSessionService, 
   getSessionById 
-} from '@/lib/services/session-service';
+} from '../services/session-service';
 import { 
   insertSensorDataBatch, 
   insertSensorData,
@@ -15,6 +15,7 @@ import {
   SensorDataInsert 
 } from '@/types/supabase';
 import { getAllPlayers } from '@/lib/services/player-service';
+import { addSessionPlayersBatch } from '../services/session-player-service';
 
 /**
  * Class for managing recording sessions
@@ -27,9 +28,16 @@ export class SessionManager {
   private bufferSize: number = 50; // Number of data points to buffer before saving to database
   private lastFlushTime: number = 0;
   private flushInterval: number = 5000; // Flush buffer every 5 seconds
-  private firstTimestamp: number | null = null; // Track the first timestamp for normalization
-  private lastNormalizedTimestamp: number = 0; // Track the last normalized timestamp
+  public sessionStartTime: number | null = null; // Track session start time
+  private totalPointsReceived: number = 0; // Track total points received in this session instance
+  
+  // Per-device timestamp normalization state
+  private firstTimestampMap: Map<string, number> = new Map(); 
+  private lastNormalizedTimestampMap: Map<string, number> = new Map();
   private timestampInterval: number = 0.02; // Interval for 50Hz (seconds)
+  
+  private expectedDeviceIds: string[] = []; // List of device IDs expected for this session
+  
   private isFlushingBuffer: boolean = false; // Track if we're currently flushing
   private pendingBuffer: SensorDataInsert[] = []; // Buffer for data received during flush
   
@@ -51,11 +59,43 @@ export class SessionManager {
   }
   
   /**
+   * Initializes the manager for a specific session that has already been created.
+   * @param sessionId The ID of the session.
+   * @param playerDeviceMappings Array of player/device pairs for this session.
+   */
+  initializeSession(sessionId: string, playerDeviceMappings: { playerId: string, deviceId: string }[]): void {
+    if (this.isRecording) {
+      console.warn('Attempting to initialize session while another is already in progress. Ending previous session first.');
+      // Optionally, call endSession or throw an error, depending on desired behavior.
+      // For now, let's just reset state.
+    }
+    
+    console.log(`Initializing SessionManager for existing session ID: ${sessionId}`);
+    this.sessionId = sessionId;
+    this.isRecording = true;
+    this.dataBuffer = [];
+    this.pendingBuffer = [];
+    this.lastFlushTime = Date.now();
+    this.sessionStartTime = Date.now(); // Record start time
+    this.totalPointsReceived = 0; // Reset counter
+    
+    // Reset timestamp normalization maps and store expected devices
+    this.firstTimestampMap.clear();
+    this.lastNormalizedTimestampMap.clear();
+    this.expectedDeviceIds = playerDeviceMappings.map(m => m.deviceId);
+    // Set the primary playerId? Or maybe this manager shouldn't track a single player anymore.
+    this.playerId = playerDeviceMappings.length > 0 ? playerDeviceMappings[0].playerId : null; 
+
+    console.log(`SessionManager initialized for session ${this.sessionId}, expecting devices: ${this.expectedDeviceIds.join(', ')}`);
+  }
+  
+  /**
    * Start a new recording session
    * @param name Session name (optional)
+   * @param playerDeviceMappings Array of player/device pairs for this session
    * @returns Session ID
    */
-  async startSession(name?: string): Promise<string> {
+  async startSession(name?: string, playerDeviceMappings: { playerId: string, deviceId: string }[] = []): Promise<string> {
     if (this.isRecording) {
       throw new Error('Session already in progress');
     }
@@ -75,12 +115,31 @@ export class SessionManager {
       this.isRecording = true;
       this.dataBuffer = [];
       this.lastFlushTime = Date.now();
+      this.sessionStartTime = Date.now(); // Record start time
+      this.totalPointsReceived = 0; // Reset counter
       
-      // Reset timestamp normalization
-      this.firstTimestamp = null;
-      this.lastNormalizedTimestamp = 0;
+      // Reset timestamp normalization maps and store expected devices
+      this.firstTimestampMap.clear();
+      this.lastNormalizedTimestampMap.clear();
+      this.expectedDeviceIds = playerDeviceMappings.map(m => m.deviceId);
+      this.playerId = playerDeviceMappings.length > 0 ? playerDeviceMappings[0].playerId : null; // Keep track of the primary player? Or remove this.playerId altogether?
       
-      console.log(`Started session with ID: ${this.sessionId}`);
+      // Insert playerDeviceMappings into session_players table
+      try {
+        await addSessionPlayersBatch(this.sessionId, playerDeviceMappings); 
+        console.log(`Saved ${playerDeviceMappings.length} player/device mappings to session_players`);
+      } catch (mappingError) {
+        console.error('Failed to save player/device mappings:', mappingError);
+        // Decide how to handle this - stop the session? Allow it to continue without mappings?
+        // For now, let's log the error and continue, but mark the session as potentially problematic.
+        // Consider throwing the error to prevent the session from starting if mappings are critical.
+      }
+
+      console.log(`Started session with ID: ${this.sessionId}, expecting devices: ${this.expectedDeviceIds.join(', ')}`);
+      // Ensure sessionId is a string before returning
+      if (!this.sessionId) {
+          throw new Error('Session ID was not set after creation.');
+      }
       return this.sessionId;
     } catch (error) {
       console.error('Error starting session:', error);
@@ -111,10 +170,12 @@ export class SessionManager {
       this.isRecording = true;
       this.dataBuffer = [];
       this.lastFlushTime = Date.now();
+      this.sessionStartTime = Date.now(); // Record start time
+      this.totalPointsReceived = 0; // Reset counter
       
       // Reset timestamp normalization
-      this.firstTimestamp = null;
-      this.lastNormalizedTimestamp = 0;
+      this.firstTimestampMap.clear();
+      this.lastNormalizedTimestampMap.clear();
       
       console.log(`Using existing session with ID: ${this.sessionId}`);
       return this.sessionId;
@@ -126,87 +187,145 @@ export class SessionManager {
   
   /**
    * End the current recording session
+   * @param intendedEndTime The timestamp when the user requested to stop.
    * @returns Session ID
    */
-  async endSession(): Promise<string> {
+  async endSession(intendedEndTime: Date): Promise<string> {
     if (!this.isRecording || !this.sessionId) {
-      throw new Error('No session in progress');
+      // If called when not recording, just ensure state is clean and return gracefully
+      console.warn('endSession called but no session was in progress.');
+      this.isRecording = false;
+      this.sessionId = null;
+      this.firstTimestampMap.clear(); 
+      this.lastNormalizedTimestampMap.clear();
+      this.expectedDeviceIds = [];
+      this.dataBuffer = [];
+      this.pendingBuffer = [];
+      this.sessionStartTime = null; // Reset start time
+      this.totalPointsReceived = 0; // Reset counter
+      return ""; // Return empty string or handle appropriately
     }
     
     const sessionId = this.sessionId;
+    console.log(`Attempting to end session ${sessionId}...`);
     
     try {
-      // Stop recording immediately to prevent new data from being added
-      this.isRecording = false;
+      // ** Wait for any ongoing background flush to complete **
+      let waitAttempts = 0;
+      const maxWaitAttempts = 100; // Wait up to 5 seconds (100 * 50ms)
+      while (this.isFlushingBuffer && waitAttempts < maxWaitAttempts) {
+          waitAttempts++;
+          console.log(`Waiting for ongoing flush to complete... Attempt: ${waitAttempts}`);
+          await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      if (this.isFlushingBuffer) {
+          console.error(`Timed out waiting for background flush to complete. Proceeding, but data integrity might be compromised.`);
+          // Decide: throw error or proceed cautiously? Let's proceed for now.
+      }
       
-      // Flush any remaining data with retries
-      if (this.dataBuffer.length > 0) {
-        console.log(`Flushing ${this.dataBuffer.length} remaining data points before ending session`);
-        let retryCount = 0;
-        const maxRetries = 3;
-        
-        while (this.dataBuffer.length > 0 && retryCount < maxRetries) {
-          try {
-            await this.flushBuffer();
-            break; // If successful, exit the retry loop
-          } catch (flushError) {
-            console.error(`Flush attempt ${retryCount + 1} failed:`, flushError);
-            retryCount++;
-            if (retryCount === maxRetries) {
-              console.error('Max retry attempts reached for flushing data');
-            }
-            // Short delay before retry
-            await new Promise(resolve => setTimeout(resolve, 1000));
-          }
+      // ** Consolidate pending data ** 
+      if (this.pendingBuffer.length > 0) {
+          console.log(`Moving ${this.pendingBuffer.length} pending items into main buffer before final flush.`);
+          this.dataBuffer.push(...this.pendingBuffer);
+          this.pendingBuffer = [];
+      }
+
+      // ** Final Flush Loop (simpler condition) **
+      let attempt = 0;
+      const maxFlushAttempts = 10; 
+      
+      console.log(`Performing final flush attempts for session ${sessionId}. Initial buffer size: ${this.dataBuffer.length}`);
+      while (attempt < maxFlushAttempts && this.dataBuffer.length > 0) {
+        attempt++;
+        console.log(`Final flush attempt ${attempt}... Buffer size: ${this.dataBuffer.length}`);
+
+        try {
+             // Now call flushBuffer. It handles its own isFlushingBuffer check internally.
+             // It will move any new pending data to the main buffer in its finally block.
+             await this.flushBuffer(); 
+             // No delay needed here, the loop condition re-evaluates buffer length
+        } catch (flushError) {
+             console.error(`Final flush attempt ${attempt} failed:`, flushError);
+             // Decide if we retry or give up. Let's break for now.
+             break;
         }
       }
-      
-      // Use the endSession service function to update end time and calculate duration
-      try {
-        await endSessionService(sessionId);
-        console.log('Session ended with duration calculation');
-      } catch (updateError) {
-        console.error('Failed to update session end time and duration:', updateError);
-        // Continue with cleanup even if update fails
+
+      // Final check after loop
+      if (this.dataBuffer.length > 0 || this.pendingBuffer.length > 0) { // Check pending too, just in case
+           console.error(`Data still remaining in buffers after ${attempt} final flush attempts. Buffer: ${this.dataBuffer.length}, Pending: ${this.pendingBuffer.length}. DATA MAY BE LOST.`);
       }
       
-      // Clean up
-      this.sessionId = null;
-      this.firstTimestamp = null;
-      this.lastNormalizedTimestamp = 0;
-      this.dataBuffer = []; // Clear any remaining data
+      console.log(`Final flushing completed after ${attempt} attempts.`);
+
+      // Update the session end time in the database
+      try {
+        const sessionUpdate: SessionUpdate = {
+          end_time: intendedEndTime.toISOString(),
+          // Add other fields to update if necessary, like duration or status
+        };
+        console.log(`Updating session ${sessionId} with end time: ${intendedEndTime.toISOString()}`);
+        await updateSession(sessionId, sessionUpdate);
+        console.log(`Session ${sessionId} end time updated successfully.`);
+      } catch (updateError) {
+        console.error(`Failed to update session end time for ${sessionId}:`, updateError);
+        // Decide how to handle this error. Log it? Throw it?
+        // Let's log and continue cleanup for now.
+      }
+
+      const finalSessionId = this.sessionId;
       
-      console.log(`Ended session with ID: ${sessionId}`);
-      return sessionId;
+      // Reset state *after* potentially accessing sessionId
+      this.isRecording = false;
+      this.sessionId = null;
+      this.firstTimestampMap.clear();
+      this.lastNormalizedTimestampMap.clear();
+      this.expectedDeviceIds = [];
+      this.dataBuffer = []; // Already flushed, but clear just in case
+      this.pendingBuffer = []; // Clear any pending items that didn't make it
+      this.sessionStartTime = null; // Reset start time
+      this.totalPointsReceived = 0; // Reset counter
+
+      console.log(`Session ${finalSessionId} ended successfully.`);
+      return finalSessionId || ""; // Ensure we return the ID even after resetting state
     } catch (error) {
-      // Even if there's an error, try to clean up
-      this.sessionId = null;
-      this.firstTimestamp = null;
-      this.lastNormalizedTimestamp = 0;
-      this.dataBuffer = [];
-      
       console.error('Error ending session:', error);
+      // Reset state even on error to prevent inconsistent manager state
+      this.isRecording = false;
+      this.sessionId = null;
+      this.firstTimestampMap.clear();
+      this.lastNormalizedTimestampMap.clear();
+      this.expectedDeviceIds = [];
+      this.dataBuffer = [];
+      this.pendingBuffer = [];
+      this.sessionStartTime = null; // Reset start time
+      this.totalPointsReceived = 0; // Reset counter
       throw new Error(`Failed to end session: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   
   /**
-   * Normalize a timestamp relative to the first timestamp in the session
+   * Normalize a timestamp for a specific device relative to its first timestamp in the session
+   * @param deviceId The device ID for which to normalize the timestamp
    * @param rawTimestamp Raw timestamp from the sensor
-   * @returns Normalized timestamp starting from 0 and incrementing by 0.02
+   * @returns Normalized timestamp starting from 0 and incrementing by 0.02 for that device
    */
-  private normalizeTimestamp(rawTimestamp: number): number {
-    // If this is the first timestamp in the session, set it as the baseline
-    if (this.firstTimestamp === null) {
-      this.firstTimestamp = rawTimestamp;
-      console.log(`Set first timestamp baseline to: ${this.firstTimestamp}`);
+  private normalizeTimestamp(deviceId: string, rawTimestamp: number): number {
+    // If this is the first timestamp for this device, set its baseline
+    if (!this.firstTimestampMap.has(deviceId)) {
+      this.firstTimestampMap.set(deviceId, rawTimestamp);
+      this.lastNormalizedTimestampMap.set(deviceId, 0); // Initialize last normalized time
+      console.log(`Set first timestamp baseline for device ${deviceId} to: ${rawTimestamp}`);
       return 0;
     }
     
-    // Calculate the normalized timestamp based on sequence
-    // This ensures timestamps are always 0.02 seconds apart regardless of actual time
-    this.lastNormalizedTimestamp += this.timestampInterval;
-    return parseFloat(this.lastNormalizedTimestamp.toFixed(2)); // Use 2 decimal places for 50Hz
+    // Calculate the normalized timestamp based on sequence for this device
+    let lastNormalized = this.lastNormalizedTimestampMap.get(deviceId) || 0;
+    lastNormalized += this.timestampInterval;
+    this.lastNormalizedTimestampMap.set(deviceId, lastNormalized);
+    
+    // Use 2 decimal places for 50Hz
+    return parseFloat(lastNormalized.toFixed(2)); 
   }
   
   /**
@@ -215,12 +334,20 @@ export class SessionManager {
    * @returns True if data was added successfully
    */
   async addSensorData(data: number[]): Promise<boolean> {
-    // Check if a session is in progress
     if (!this.isRecording || !this.sessionId) {
       console.warn('Cannot add data: No session in progress', { isRecording: this.isRecording, sessionId: this.sessionId });
       return false;
     }
     
+    // Get device ID from data
+    const deviceId = String(data[0] || 'unknown');
+
+    // Check if this device is expected for the current session
+    if (!this.expectedDeviceIds.includes(deviceId)) {
+        console.log(`Ignoring data from unexpected device ID: ${deviceId}. Expected: ${this.expectedDeviceIds.join(', ')}`);
+        return false;
+    }
+
     try {
       console.log(`Adding sensor data to session ${this.sessionId}:`, {
         dataLength: data.length,
@@ -262,14 +389,17 @@ export class SessionManager {
       // Get the raw timestamp from the data
       const rawTimestamp = data[1] || Date.now();
       
-      // Normalize the timestamp
-      const normalizedTimestamp = this.normalizeTimestamp(rawTimestamp);
-      console.log(`Normalized timestamp: ${rawTimestamp} -> ${normalizedTimestamp}`);
+      // Normalize the timestamp for this specific device
+      const normalizedTimestamp = this.normalizeTimestamp(deviceId, rawTimestamp);
+      console.log(`Normalized timestamp for device ${deviceId}: ${rawTimestamp} -> ${normalizedTimestamp}`);
+      
+      // Increment total points counter *before* adding to buffer
+      this.totalPointsReceived++;
       
       // Create a sensor data record
       const sensorData: SensorDataInsert = {
         session_id: this.sessionId,
-        device_id: String(data[0] || 'unknown'),
+        device_id: deviceId,
         timestamp: normalizedTimestamp,
         battery_level: data[2] || 0,
         orientation_x: data[3] || 0,
@@ -314,25 +444,36 @@ export class SessionManager {
   
   /**
    * Flush the data buffer to the database
-   * @returns True if buffer was flushed successfully
+   * @returns True if a flush was attempted (i.e., buffer was not empty), false otherwise.
    */
   private async flushBuffer(): Promise<boolean> {
     if (this.isFlushingBuffer) {
       console.log('Flush already in progress, skipping');
-      return false;
+      return false; // Did not attempt flush
     }
     
     if (this.dataBuffer.length === 0) {
       console.log('No data to flush');
-      return true;
+      // Even if no data, check if pending needs moving
+      if (this.pendingBuffer.length > 0) {
+         console.log(`Moving ${this.pendingBuffer.length} pending records to main buffer (during no-op flush)`);
+         this.dataBuffer = [...this.pendingBuffer];
+         this.pendingBuffer = [];
+         // Indicate something happened that might require another loop check in endSession
+         return true; 
+      }
+      return false; // Did not attempt flush
     }
     
+    // Set flag and copy buffer
     this.isFlushingBuffer = true;
-    const dataToFlush = [...this.dataBuffer]; // Create a copy of the current buffer
-    this.dataBuffer = []; // Clear the main buffer
+    const dataToFlush = [...this.dataBuffer];
+    this.dataBuffer = []; 
     
+    let attemptedFlush = false; // Track if we actually tried to insert
     try {
       console.log(`Flushing ${dataToFlush.length} data points to database`);
+      attemptedFlush = true; // We are attempting a flush
       
       // Process data in smaller chunks
       const chunkSize = 10;
@@ -364,22 +505,28 @@ export class SessionManager {
         }
       }
       
+      console.log(`Data flush completed: ${totalSuccess} out of ${dataToFlush.length} records inserted successfully`);
+      
+      // Reset last flush time only on successful attempt
       this.lastFlushTime = Date.now();
       
-      // After successful flush, move any pending data to the main buffer
-      if (this.pendingBuffer.length > 0) {
-        console.log(`Moving ${this.pendingBuffer.length} pending records to main buffer`);
-        this.dataBuffer = [...this.pendingBuffer];
-        this.pendingBuffer = [];
-      }
-      
-      console.log(`Data flush completed: ${totalSuccess} records inserted successfully`);
-      return totalSuccess > 0;
+      return true; // Indicate flush was attempted
+
     } catch (error) {
       console.error('Error flushing data buffer:', error);
-      return false;
+      // If an error occurred during insertion, we still attempted the flush
+      return true; 
     } finally {
+      // **Crucial:** Move pending data AFTER the flush attempt completes
+      // regardless of success or failure, but BEFORE resetting the flag.
+      if (this.pendingBuffer.length > 0) {
+        console.log(`Moving ${this.pendingBuffer.length} pending records to main buffer (post-flush)`);
+        // Prepend dataToFlush back if insert failed? Or discard? For now, just move pending.
+        this.dataBuffer = [...this.dataBuffer, ...this.pendingBuffer]; // Append pending to potentially re-added dataBuffer if needed
+        this.pendingBuffer = [];
+      }
       this.isFlushingBuffer = false;
+      console.log(`FlushBuffer finished. Attempted: ${attemptedFlush}. Final dataBuffer size: ${this.dataBuffer.length}`);
     }
   }
   
@@ -404,7 +551,7 @@ export class SessionManager {
    * @param playerId Player ID
    */
   setPlayerId(playerId: string): void {
-    console.log(`Setting player ID: ${playerId}`);
+    console.warn(`Setting player ID directly (${playerId}) - this might be deprecated if session handles multiple players.`);
     this.playerId = playerId;
   }
   
@@ -414,5 +561,26 @@ export class SessionManager {
    */
   getPlayerId(): string | null {
     return this.playerId;
+  }
+
+  /**
+   * Gets the number of data points currently in the main buffer.
+   */
+  getBufferedDataCount(): number {
+    return this.dataBuffer.length;
+  }
+
+  /**
+   * Gets the number of data points currently in the pending buffer (waiting for flush completion).
+   */
+  getPendingDataCount(): number {
+    return this.pendingBuffer.length;
+  }
+
+  /**
+   * Gets the total number of data points received during this session instance.
+   */
+  getTotalPointsReceived(): number {
+    return this.totalPointsReceived;
   }
 } 

@@ -28,3 +28,18 @@ export function formatDuration(seconds: number): string {
   
   return `${pad(minutes)}:${pad(remainingSeconds)}`;
 }
+
+/**
+ * Format a SessionType string into a human-readable format
+ * @param type SessionType string (e.g., 'pass_calibration')
+ * @returns Formatted string (e.g., 'Pass Calibration')
+ */
+export function formatSessionType(type: string | undefined | null): string {
+  if (!type) return 'Unknown Type';
+  
+  // Replace underscores with spaces and capitalize each word
+  return type
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
