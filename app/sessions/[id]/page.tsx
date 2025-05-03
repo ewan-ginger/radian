@@ -560,6 +560,19 @@ export default function SessionDetailPage() {
                     const endSec = action.endTime.toFixed(2);
                     const interval = `${startSec}s - ${endSec}s`;
 
+                    // --- FORMAT METRIC BASED ON LABEL --- 
+                    let metricDisplay = 'N/A';
+                    if (action.metric !== null) {
+                      if (action.label === 'faceoff') {
+                        const metricMs = action.metric * 1000;
+                        // Add sign explicitly for clarity
+                        metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
+                      } else {
+                        // Default to mph for other actions (pass, shot, etc.)
+                        metricDisplay = `${action.metric.toFixed(2)} mph`;
+                      }
+                    }
+
                     return (
                       <TableRow 
                         key={`${action.label}-${index}-${action.startTime}`}
@@ -572,7 +585,7 @@ export default function SessionDetailPage() {
                         <TableCell className="font-medium capitalize">{action.label}</TableCell>
                         <TableCell>{interval}</TableCell>
                         <TableCell className="text-right">
-                          {action.metric !== null ? `${action.metric.toFixed(2)} mph` : 'N/A'}
+                          {metricDisplay}
                         </TableCell>
                       </TableRow>
                     );
