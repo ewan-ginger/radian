@@ -36,7 +36,7 @@ const playerFormSchema = z.object({
   stick_type: z.enum(['short-stick', 'long-stick', 'goalie-stick'], {
     required_error: 'Please select a stick type'
   }),
-  position: z.enum(['attack', 'midfield', 'defense', 'goalie'], {
+  position: z.enum(['attack', 'midfield', 'faceoff', 'defense', 'goalie'], {
     required_error: 'Please select a position'
   }),
   strong_hand: z.enum(['left', 'right'], {
@@ -153,6 +153,7 @@ export function PlayerProfileForm({
                 <SelectContent>
                   <SelectItem value="attack">Attack</SelectItem>
                   <SelectItem value="midfield">Midfield</SelectItem>
+                  <SelectItem value="faceoff">Faceoff</SelectItem>
                   <SelectItem value="defense">Defense</SelectItem>
                   <SelectItem value="goalie">Goalie</SelectItem>
                 </SelectContent>

@@ -12,7 +12,7 @@ export interface PlayerEntity extends Player {
   isActive?: boolean;
   lastSeen?: Date;
   stick_type: 'short-stick' | 'long-stick' | 'goalie-stick';
-  position: 'attack' | 'midfield' | 'defense' | 'faceoff'| 'goalie';
+  position: 'attack' | 'midfield' | 'defense' | 'faceoff' | 'goalie';
   strong_hand: 'left' | 'right';
 }
 
@@ -58,7 +58,7 @@ export interface SessionEntity {
   name: string | null;
   start_time: string;
   end_time: string | null;
-  duration?: unknown; // in seconds
+  duration?: unknown; // Keep as unknown, handle in component
   session_type?: SessionType; // Optional to handle null values from database
   created_at: string;
   // Additional application properties
@@ -69,9 +69,15 @@ export interface SessionEntity {
 }
 
 // Session player entity representing a player-device pair in a session
+// Includes optional nested player info as fetched by service, 
+// but prefer using the top-level playerName if available.
 export interface SessionPlayerEntity extends SessionPlayer {
   playerName?: string; // Convenience property with the player's name
   deviceName?: string; // Convenience property with a human-readable device name
+  player?: { // Optional nested player info as returned by some queries
+      id: string;
+      name: string | null;
+  } | null;
 }
 
 // Sensor data entity with additional application-specific properties
@@ -143,4 +149,27 @@ export interface OrientationData {
   x: number;
   y: number;
   z: number;
+}
+
+// Represents data stored in the training_sensor_data table
+export interface TrainingSensorDataEntity {
+  id: string; // uuid, primary key
+  original_data_id: string | null; // uuid, foreign key to sensor_data
+  session_id: string | null; // uuid, foreign key to sessions
+  player_id: string | null; // uuid, foreign key to player_profiles
+  timestamp: number; // float8 (double precision)
+  accelerometer_x: number | null; // real
+  accelerometer_y: number | null; // real
+  accelerometer_z: number | null; // real
+  gyroscope_x: number | null; // real
+  gyroscope_y: number | null; // real
+  gyroscope_z: number | null; // real
+  magnetometer_x: number | null; // real
+  magnetometer_y: number | null; // real
+  magnetometer_z: number | null; // real
+  orientation_x: number | null; // real
+  orientation_y: number | null; // real
+  orientation_z: number | null; // real
+  label: string | null; // text
+  metric: number | null; // real
 } 

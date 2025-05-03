@@ -43,11 +43,11 @@ const AlertDescription = ({ children }: { children: React.ReactNode }) => {
 // Moved here to be accessible for display logic
 const CALIBRATION_CONFIG: Partial<Record<SessionType, { durationMinutes: number; beepIntervalSeconds: number | null }>> = {
   'pass_calibration':         { durationMinutes: 5, beepIntervalSeconds: 5 },
-  'groundball_calibration':   { durationMinutes: 5, beepIntervalSeconds: 5 },
-  'pass_catch_calibration':   { durationMinutes: 5, beepIntervalSeconds: 5 }, 
-  'shot_calibration':         { durationMinutes: 5, beepIntervalSeconds: 10 },
-  'faceoff_calibration':      { durationMinutes: 5, beepIntervalSeconds: 15 },
-  'cradle_calibration':       { durationMinutes: 5, beepIntervalSeconds: null }, // No beeps for cradle
+  'groundball_calibration':   { durationMinutes: 1, beepIntervalSeconds: 5 },
+  'pass_catch_calibration':   { durationMinutes: 1, beepIntervalSeconds: 5 }, 
+  'shot_calibration':         { durationMinutes: 1, beepIntervalSeconds: 10 },
+  'faceoff_calibration':      { durationMinutes: 1, beepIntervalSeconds: 15 },
+  'cradle_calibration':       { durationMinutes: 1, beepIntervalSeconds: null }, // No beeps for cradle
 };
 
 // Simple spinner component since we don't have a dedicated spinner component
