@@ -196,7 +196,7 @@ export class SessionManager {
       console.warn('endSession called but no session was in progress.');
       this.isRecording = false;
       this.sessionId = null;
-      this.firstTimestampMap.clear(); 
+      this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
       this.expectedDeviceIds = [];
       this.dataBuffer = [];
@@ -205,25 +205,31 @@ export class SessionManager {
       this.totalPointsReceived = 0; // Reset counter
       return ""; // Return empty string or handle appropriately
     }
-    
+
     const sessionId = this.sessionId;
     console.log(`Attempting to end session ${sessionId}...`);
-    
+
     try {
       // ** Wait for any ongoing background flush to complete **
       let waitAttempts = 0;
-      const maxWaitAttempts = 100; // Wait up to 5 seconds (100 * 50ms)
+      // INCREASED TIMEOUT: Wait up to 30 seconds (600 * 50ms)
+      const maxWaitAttempts = 600;
       while (this.isFlushingBuffer && waitAttempts < maxWaitAttempts) {
           waitAttempts++;
-          console.log(`Waiting for ongoing flush to complete... Attempt: ${waitAttempts}`);
+          // Log less frequently during long waits
+          if (waitAttempts % 20 === 0) {
+              console.log(`Waiting for ongoing flush to complete... Attempt: ${waitAttempts}`);
+          }
           await new Promise(resolve => setTimeout(resolve, 50));
       }
       if (this.isFlushingBuffer) {
-          console.error(`Timed out waiting for background flush to complete. Proceeding, but data integrity might be compromised.`);
-          // Decide: throw error or proceed cautiously? Let's proceed for now.
+          // If still flushing after 30s, something is seriously wrong.
+          console.error(`CRITICAL: Timed out after ${maxWaitAttempts * 50 / 1000}s waiting for background flush. Data WILL be lost.`);
+          // Maybe throw an error here instead of proceeding? For now, log and continue cleanup.
+          // throw new Error("Timeout waiting for background flush during session end");
       }
-      
-      // ** Consolidate pending data ** 
+
+      // ** Consolidate pending data **
       if (this.pendingBuffer.length > 0) {
           console.log(`Moving ${this.pendingBuffer.length} pending items into main buffer before final flush.`);
           this.dataBuffer.push(...this.pendingBuffer);
@@ -232,22 +238,24 @@ export class SessionManager {
 
       // ** Final Flush Loop (simpler condition) **
       let attempt = 0;
-      const maxFlushAttempts = 10; 
-      
+      const maxFlushAttempts = 10;
+
       console.log(`Performing final flush attempts for session ${sessionId}. Initial buffer size: ${this.dataBuffer.length}`);
-      while (attempt < maxFlushAttempts && this.dataBuffer.length > 0) {
+      // Only loop if there's data AND the flush lock isn't mysteriously stuck
+      while (attempt < maxFlushAttempts && this.dataBuffer.length > 0 && !this.isFlushingBuffer) {
         attempt++;
         console.log(`Final flush attempt ${attempt}... Buffer size: ${this.dataBuffer.length}`);
 
         try {
-             // Now call flushBuffer. It handles its own isFlushingBuffer check internally.
-             // It will move any new pending data to the main buffer in its finally block.
-             await this.flushBuffer(); 
-             // No delay needed here, the loop condition re-evaluates buffer length
+             await this.flushBuffer();
+             // Add a small delay IF data remains, allowing DB/network time
+             if (this.dataBuffer.length > 0) {
+                 await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+             }
         } catch (flushError) {
              console.error(`Final flush attempt ${attempt} failed:`, flushError);
-             // Decide if we retry or give up. Let's break for now.
-             break;
+             // Wait before next attempt on error
+             await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
@@ -255,26 +263,24 @@ export class SessionManager {
       if (this.dataBuffer.length > 0 || this.pendingBuffer.length > 0) { // Check pending too, just in case
            console.error(`Data still remaining in buffers after ${attempt} final flush attempts. Buffer: ${this.dataBuffer.length}, Pending: ${this.pendingBuffer.length}. DATA MAY BE LOST.`);
       }
-      
+
       console.log(`Final flushing completed after ${attempt} attempts.`);
 
-      // Update the session end time in the database
+      // Update the session end time AND duration in the database using the service function
       try {
-        const sessionUpdate: SessionUpdate = {
-          end_time: intendedEndTime.toISOString(),
-          // Add other fields to update if necessary, like duration or status
-        };
-        console.log(`Updating session ${sessionId} with end time: ${intendedEndTime.toISOString()}`);
-        await updateSession(sessionId, sessionUpdate);
-        console.log(`Session ${sessionId} end time updated successfully.`);
-      } catch (updateError) {
-        console.error(`Failed to update session end time for ${sessionId}:`, updateError);
-        // Decide how to handle this error. Log it? Throw it?
-        // Let's log and continue cleanup for now.
+        console.log(`Calling endSession service for ${sessionId} with end time: ${intendedEndTime.toISOString()}`);
+        // Use the dedicated service function which calls the RPC
+        await endSessionService(sessionId, intendedEndTime);
+        console.log(`Session ${sessionId} ended successfully via service call.`);
+      } catch (endSessionError) {
+        // Log the specific error from the endSessionService call
+        console.error(`Failed to end session via service call for ${sessionId}:`, endSessionError);
+        // *** Re-throw the error to signal failure ***
+        throw endSessionError; 
       }
 
       const finalSessionId = this.sessionId;
-      
+
       // Reset state *after* potentially accessing sessionId
       this.isRecording = false;
       this.sessionId = null;
@@ -451,7 +457,7 @@ export class SessionManager {
       console.log('Flush already in progress, skipping');
       return false; // Did not attempt flush
     }
-    
+
     if (this.dataBuffer.length === 0) {
       console.log('No data to flush');
       // Even if no data, check if pending needs moving
@@ -460,30 +466,48 @@ export class SessionManager {
          this.dataBuffer = [...this.pendingBuffer];
          this.pendingBuffer = [];
          // Indicate something happened that might require another loop check in endSession
-         return true; 
+         return true;
       }
       return false; // Did not attempt flush
     }
-    
+
     // Set flag and copy buffer
     this.isFlushingBuffer = true;
     const dataToFlush = [...this.dataBuffer];
-    this.dataBuffer = []; 
-    
+    this.dataBuffer = [];
+
     let attemptedFlush = false; // Track if we actually tried to insert
+    let success = false; // Track overall success
+
     try {
       console.log(`Flushing ${dataToFlush.length} data points to database`);
       attemptedFlush = true; // We are attempting a flush
-      
-      // Process data in smaller chunks
+
+      // --- SIMPLIFIED APPROACH: Try batch insert directly ---
+      // Remove chunking/fallback for now to simplify and rely on batch insert robustness
+      try {
+         console.log(`Attempting to insert batch of ${dataToFlush.length} records...`);
+         // Assuming insertSensorDataBatch handles the entire array and returns success/throws error
+         await insertSensorDataBatch(dataToFlush);
+         console.log(`Successfully inserted batch of ${dataToFlush.length} records`);
+         success = true;
+         this.lastFlushTime = Date.now(); // Update last flush time on success
+      } catch (batchError) {
+         console.error(`Batch insertion of ${dataToFlush.length} records failed:`, batchError);
+         success = false;
+         // Data will be re-buffered in the catch block below
+      }
+      // --- End Simplified Approach ---
+
+      /* // --- Original Chunking/Fallback Logic (Commented out for now) ---
       const chunkSize = 10;
       const chunks = [];
       for (let i = 0; i < dataToFlush.length; i += chunkSize) {
         chunks.push(dataToFlush.slice(i, i + chunkSize));
       }
-      
+
       let totalSuccess = 0;
-      
+
       for (const chunk of chunks) {
         try {
           console.log(`Attempting to insert chunk of ${chunk.length} records...`);
@@ -492,7 +516,7 @@ export class SessionManager {
           console.log(`Successfully inserted chunk of ${chunk.length} records`);
         } catch (chunkError) {
           console.error('Chunk insertion failed:', chunkError);
-          
+
           // Fall back to individual inserts for this chunk
           for (const record of chunk) {
             try {
@@ -504,29 +528,42 @@ export class SessionManager {
           }
         }
       }
-      
+
       console.log(`Data flush completed: ${totalSuccess} out of ${dataToFlush.length} records inserted successfully`);
-      
+
       // Reset last flush time only on successful attempt
       this.lastFlushTime = Date.now();
-      
+
       return true; // Indicate flush was attempted
 
+      */ // --- End Original Chunking Logic ---
+
+      return success; // Return true if successful, false otherwise
+
     } catch (error) {
-      console.error('Error flushing data buffer:', error);
-      // If an error occurred during insertion, we still attempted the flush
-      return true; 
+      // This catch block might be less likely to be hit now if insertSensorDataBatch handles its own errors
+      console.error('Unexpected error during flushBuffer execution:', error);
+      success = false; // Ensure success is false on unexpected error
+      // Ensure data is preserved even with unexpected errors
+      // (Handled in the finally block now)
+      return false; // Indicate failure
     } finally {
-      // **Crucial:** Move pending data AFTER the flush attempt completes
-      // regardless of success or failure, but BEFORE resetting the flag.
+      // ** CRITICAL FIX: Re-buffer data if the flush attempt failed **
+      if (!success && attemptedFlush) {
+          console.warn(`Re-buffering ${dataToFlush.length} records due to failed flush.`);
+          // Put failed data back at the beginning of the buffer
+          this.dataBuffer.unshift(...dataToFlush);
+      }
+
+      // Move pending data AFTER the flush attempt completes and potential re-buffering
       if (this.pendingBuffer.length > 0) {
         console.log(`Moving ${this.pendingBuffer.length} pending records to main buffer (post-flush)`);
-        // Prepend dataToFlush back if insert failed? Or discard? For now, just move pending.
-        this.dataBuffer = [...this.dataBuffer, ...this.pendingBuffer]; // Append pending to potentially re-added dataBuffer if needed
+        // Append pending data
+        this.dataBuffer.push(...this.pendingBuffer);
         this.pendingBuffer = [];
       }
-      this.isFlushingBuffer = false;
-      console.log(`FlushBuffer finished. Attempted: ${attemptedFlush}. Final dataBuffer size: ${this.dataBuffer.length}`);
+      this.isFlushingBuffer = false; // Release the lock
+      console.log(`FlushBuffer finished. Success: ${success}. Attempted: ${attemptedFlush}. Final dataBuffer size: ${this.dataBuffer.length}`);
     }
   }
   

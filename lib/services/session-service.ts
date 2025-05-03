@@ -240,7 +240,7 @@ export async function endSession(id: string, intendedEndTime: Date): Promise<Ses
   return updatedSession as Session;
 }
 
-async function deleteInBatches(tableName: string, sessionId: string, batchSize: number = 100): Promise<Error | null> {
+async function deleteInBatches(tableName: string, sessionId: string, batchSize: number = 500): Promise<Error | null> {
   console.log(`Starting batch delete for ${tableName}, session ${sessionId}`);
   let deletedCount = 0;
   while (true) {
@@ -294,7 +294,7 @@ async function deleteInBatches(tableName: string, sessionId: string, batchSize: 
 export async function deleteSession(id: string): Promise<boolean> {
   try {
     // Batch delete training_sensor_data records (use batch size 100)
-    const trainingDataError = await deleteInBatches('training_sensor_data', id, 100);
+    const trainingDataError = await deleteInBatches('training_sensor_data', id, 500);
     if (trainingDataError) {
       // Decide if this error is critical. If so, throw.
       console.error(`Failed to fully delete training data for session ${id}:`, trainingDataError.message);
@@ -302,7 +302,7 @@ export async function deleteSession(id: string): Promise<boolean> {
     }
 
     // Batch delete sensor_data records (use batch size 100)
-    const sensorDataError = await deleteInBatches('sensor_data', id, 100);
+    const sensorDataError = await deleteInBatches('sensor_data', id, 500);
     if (sensorDataError) {
       // Sensor data deletion failure is critical as per original logic
       console.error(`Failed to fully delete sensor data for session ${id}:`, sensorDataError.message);
