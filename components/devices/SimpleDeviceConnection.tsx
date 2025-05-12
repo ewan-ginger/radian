@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Usb, Play, Pause, RefreshCw } from "lucide-react";
+import { Usb, Play, Pause, RefreshCw, Bluetooth } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useRecording } from '@/context/RecordingContext';
 import { formatDuration, formatSessionType } from '@/lib/utils';
@@ -331,6 +331,91 @@ export function SimpleDeviceConnection() {
       return false;
     }
   };
+  
+  // Function to send pairing command to selected devices
+  async function handlePairDevices() {
+    if (!isConnected) {
+      console.error('Cannot pair: not connected');
+      toast.error('Device not connected');
+      return;
+    }
+
+    // Ensure all device IDs are selected
+    const allDevicesSelected = playerDeviceMappings.every(m => m.deviceId);
+    if (!allDevicesSelected) {
+      toast.error('Please select a device ID for all players before pairing.');
+      return;
+    }
+
+    console.log('Starting continuous pairing process for 6 seconds for devices:', playerDeviceMappings);
+    toast.info('Sending pairing commands for 6 seconds...');
+
+    const pairingPromises = playerDeviceMappings.map(mapping => {
+      return new Promise<void>(async (resolve, reject) => {
+        if (!mapping.deviceId) {
+          // Skip if no device ID, but resolve immediately
+          resolve();
+          return;
+        }
+
+        const deviceId = mapping.deviceId;
+        const command = `${deviceId}:connect`;
+        const pairingDuration = 6000; // 6 seconds
+        const sendInterval = 100; // Send every 100ms
+
+        let intervalId: NodeJS.Timeout | null = null;
+        let timeoutId: NodeJS.Timeout | null = null;
+
+        try {
+          console.log(`[Device ${deviceId}] Starting pairing commands.`);
+          
+          // Function to send the command
+          const sendPairCommand = async () => {
+            try {
+              await sendCommand(command);
+              // console.log(`[Device ${deviceId}] Sent: ${command}`); // Optional: Log each send
+            } catch (sendError) {
+              console.error(`[Device ${deviceId}] Error sending periodic pair command:`, sendError);
+              // Stop sending for this device on error
+              if (intervalId) clearInterval(intervalId);
+              if (timeoutId) clearTimeout(timeoutId);
+              reject(sendError); 
+            }
+          };
+
+          // Send immediately once
+          await sendPairCommand();
+
+          // Then send repeatedly
+          intervalId = setInterval(sendPairCommand, sendInterval);
+
+          // Stop sending after 6 seconds
+          timeoutId = setTimeout(() => {
+            if (intervalId) {
+              clearInterval(intervalId);
+              console.log(`[Device ${deviceId}] Stopped sending pairing commands after 6 seconds.`);
+              resolve(); // Pairing sequence for this device completed successfully
+            }
+          }, pairingDuration);
+
+        } catch (initialSendError) {
+          console.error(`[Device ${deviceId}] Error sending initial pair command:`, initialSendError);
+          if (intervalId) clearInterval(intervalId); // Clean up interval if initial send failed
+          if (timeoutId) clearTimeout(timeoutId);
+          reject(initialSendError); // Reject the promise for this device
+        }
+      });
+    });
+
+    try {
+      await Promise.all(pairingPromises);
+      toast.success('Pairing commands sent successfully for 6 seconds.');
+      console.log('All pairing sequences completed.');
+    } catch (error) {
+      console.error('Error during pairing sequence for one or more devices:', error);
+      toast.error(`Pairing failed for one or more devices: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
   
   // Effect to update the number of player/device inputs based on session type
   useEffect(() => {
@@ -794,9 +879,15 @@ export function SimpleDeviceConnection() {
       }
       
       // 5. Send start command to device(s)
-      // TODO: Need to map playerDeviceMappings to actual serial commands if multiple physical devices exist
-      await sendCommand('start'); 
-      console.log('Sent start command.')
+      console.log('Sending start commands to devices:', playerDeviceMappings);
+      for (const mapping of playerDeviceMappings) {
+        if (mapping.deviceId) {
+           await sendCommand(`${mapping.deviceId}:start`); 
+        } else {
+           console.warn('Skipping start command for mapping without device ID:', mapping);
+        }
+      }
+      console.log('Sent start commands.')
 
       // 6. Update UI State
       console.log('Setting isStreaming to true in handleStartStreaming...');
@@ -906,8 +997,16 @@ export function SimpleDeviceConnection() {
         timeoutCleanupRef.current = null;
       }
       
-      console.log('HANDLE STOP: Sending stop command to device...');
-      await sendCommand('stop');
+      console.log('HANDLE STOP: Sending stop command to device(s)...');
+      // Send stop command to each device
+      for (const mapping of playerDeviceMappings) {
+        if (mapping.deviceId) {
+           await sendCommand(`${mapping.deviceId}:stop`);
+        } else {
+           console.warn('Skipping stop command for mapping without device ID:', mapping);
+        }
+      }
+      console.log('Sent stop commands.');
       
       // End the session in SessionManager (flushes final data)
       console.log('HANDLE STOP: Ending session manager, passing intended end time:', intendedEndTime.toISOString());
@@ -1229,6 +1328,15 @@ export function SimpleDeviceConnection() {
                     >
                       <Play className="mr-2 h-4 w-4" />
                       Start Session
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={handlePairDevices}
+                      // Disable if any required device ID is missing
+                      disabled={playerDeviceMappings.some(m => !m.deviceId) || !isConnected}
+                    >
+                      <Bluetooth className="mr-2 h-4 w-4" />
+                      Pair
                     </Button>
                     <Button
                       variant="outline"
