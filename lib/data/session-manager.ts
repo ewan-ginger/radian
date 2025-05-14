@@ -36,6 +36,9 @@ export class SessionManager {
   private lastNormalizedTimestampMap: Map<string, number> = new Map();
   private timestampInterval: number = 0.02; // Interval for 50Hz (seconds)
   
+  // Per-device packet counter for 51Hz to 50Hz downsampling
+  private packetCountMap: Map<string, number> = new Map();
+
   private expectedDeviceIds: string[] = []; // List of device IDs expected for this session
   
   private isFlushingBuffer: boolean = false; // Track if we're currently flushing
@@ -82,6 +85,7 @@ export class SessionManager {
     // Reset timestamp normalization maps and store expected devices
     this.firstTimestampMap.clear();
     this.lastNormalizedTimestampMap.clear();
+    this.packetCountMap.clear(); // Clear packet counter on session init
     this.expectedDeviceIds = playerDeviceMappings.map(m => m.deviceId);
     // Set the primary playerId? Or maybe this manager shouldn't track a single player anymore.
     this.playerId = playerDeviceMappings.length > 0 ? playerDeviceMappings[0].playerId : null; 
@@ -121,6 +125,7 @@ export class SessionManager {
       // Reset timestamp normalization maps and store expected devices
       this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
+      this.packetCountMap.clear(); // Clear packet counter on session start
       this.expectedDeviceIds = playerDeviceMappings.map(m => m.deviceId);
       this.playerId = playerDeviceMappings.length > 0 ? playerDeviceMappings[0].playerId : null; // Keep track of the primary player? Or remove this.playerId altogether?
       
@@ -176,6 +181,7 @@ export class SessionManager {
       // Reset timestamp normalization
       this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
+      this.packetCountMap.clear(); // Clear packet counter when using existing session
       
       console.log(`Using existing session with ID: ${this.sessionId}`);
       return this.sessionId;
@@ -198,6 +204,7 @@ export class SessionManager {
       this.sessionId = null;
       this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
+      this.packetCountMap.clear(); // Clear packet counter on session end
       this.expectedDeviceIds = [];
       this.dataBuffer = [];
       this.pendingBuffer = [];
@@ -286,6 +293,7 @@ export class SessionManager {
       this.sessionId = null;
       this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
+      this.packetCountMap.clear(); // Clear packet counter on session end
       this.expectedDeviceIds = [];
       this.dataBuffer = []; // Already flushed, but clear just in case
       this.pendingBuffer = []; // Clear any pending items that didn't make it
@@ -301,6 +309,7 @@ export class SessionManager {
       this.sessionId = null;
       this.firstTimestampMap.clear();
       this.lastNormalizedTimestampMap.clear();
+      this.packetCountMap.clear(); // Clear packet counter on session end
       this.expectedDeviceIds = [];
       this.dataBuffer = [];
       this.pendingBuffer = [];
@@ -348,6 +357,17 @@ export class SessionManager {
     // Get device ID from data
     const deviceId = String(data[0] || 'unknown');
 
+    // Increment and check packet counter for this device
+    let currentPacketCount = (this.packetCountMap.get(deviceId) || 0) + 1;
+    
+    if (currentPacketCount === 51) {
+      console.log(`Device ${deviceId}: Skipping 51st packet. Current raw timestamp: ${data[1]}`);
+      this.packetCountMap.set(deviceId, 0); // Reset counter for this device
+      return false; // Indicate packet was intentionally skipped
+    } else {
+      this.packetCountMap.set(deviceId, currentPacketCount);
+    }
+
     // Check if this device is expected for the current session
     if (!this.expectedDeviceIds.includes(deviceId)) {
         console.log(`Ignoring data from unexpected device ID: ${deviceId}. Expected: ${this.expectedDeviceIds.join(', ')}`);
@@ -355,7 +375,7 @@ export class SessionManager {
     }
 
     try {
-      console.log(`Adding sensor data to session ${this.sessionId}:`, {
+      console.log(`Adding sensor data to session ${this.sessionId} for device ${deviceId} (packet #${currentPacketCount}):`, {
         dataLength: data.length,
         sessionId: this.sessionId,
         playerId: this.playerId,
