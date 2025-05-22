@@ -567,7 +567,12 @@ export default function SessionDetailPage() {
                         const metricMs = action.metric * 1000;
                         // Add sign explicitly for clarity
                         metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
-                      } else {
+                      }
+                      else if (action.label === 'save') {
+                        const metricMs = action.metric * 1;
+                        // Add sign explicitly for clarity
+                        metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
+                      } else  {
                         // Default to mph for other actions (pass, shot, etc.)
                         metricDisplay = `${action.metric.toFixed(2)} mph`;
                       }

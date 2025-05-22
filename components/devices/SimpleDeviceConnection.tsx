@@ -347,8 +347,8 @@ export function SimpleDeviceConnection() {
       return;
     }
 
-    console.log('Starting continuous pairing process for 6 seconds for devices:', playerDeviceMappings);
-    toast.info('Sending pairing commands for 6 seconds...');
+    console.log('Starting continuous pairing process for 10 seconds for devices:', playerDeviceMappings);
+    toast.info('Sending pairing commands for 10 seconds...');
 
     const pairingPromises = playerDeviceMappings.map(mapping => {
       return new Promise<void>(async (resolve, reject) => {
@@ -360,8 +360,8 @@ export function SimpleDeviceConnection() {
 
         const deviceId = mapping.deviceId;
         const command = `${deviceId}:connect`;
-        const pairingDuration = 6000; // 6 seconds
-        const sendInterval = 100; // Send every 100ms
+        const pairingDuration = 10000; // 10 seconds
+        const sendInterval = 500; // Send every 100ms
 
         let intervalId: NodeJS.Timeout | null = null;
         let timeoutId: NodeJS.Timeout | null = null;
@@ -389,11 +389,11 @@ export function SimpleDeviceConnection() {
           // Then send repeatedly
           intervalId = setInterval(sendPairCommand, sendInterval);
 
-          // Stop sending after 6 seconds
+          // Stop sending after 10 seconds
           timeoutId = setTimeout(() => {
             if (intervalId) {
               clearInterval(intervalId);
-              console.log(`[Device ${deviceId}] Stopped sending pairing commands after 6 seconds.`);
+              console.log(`[Device ${deviceId}] Stopped sending pairing commands after 10 seconds.`);
               resolve(); // Pairing sequence for this device completed successfully
             }
           }, pairingDuration);
@@ -409,7 +409,7 @@ export function SimpleDeviceConnection() {
 
     try {
       await Promise.all(pairingPromises);
-      toast.success('Pairing commands sent successfully for 6 seconds.');
+      toast.success('Pairing commands sent successfully for 10 seconds.');
       console.log('All pairing sequences completed.');
     } catch (error) {
       console.error('Error during pairing sequence for one or more devices:', error);
