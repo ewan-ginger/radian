@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/MainLayout';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,7 @@ import { GyroscopeGraph } from '@/components/data/GyroscopeGraph';
 import { MagnetometerGraph } from '@/components/data/MagnetometerGraph';
 import { Badge } from '@/components/ui/badge';
 import { Button } from "@/components/ui/button";
-import { Activity, Calendar, Clock, Database, User, Wifi, Users, BarChart2, Maximize, ZoomOut } from 'lucide-react';
+import { Activity, Calendar, Clock, Database, User, Wifi, Users, BarChart2, Maximize, ZoomOut, ChevronDown } from 'lucide-react';
 import { useSessionData } from '@/hooks/useSessionData';
 import { getSensorDataBySession } from '@/lib/services/sensor-data-service';
 import { getSessionPlayersBySessionId } from '@/lib/services/session-player-service';
@@ -20,6 +20,7 @@ import { SensorDataEntity, SessionPlayerEntity, SessionEntity, SessionType, getR
 import { formatDistanceToNow, format } from 'date-fns';
 import { formatSessionType } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { LacrosseStickAnimationLoader } from '@/components/data/LacrosseStickAnimationLoader';
 
 interface ActionGroup {
   label: string;
@@ -28,6 +29,7 @@ interface ActionGroup {
   metric: number | null;
   count: number; // Number of data points in the group
   playerName: string | null;
+  playerId: string | null;
 }
 
 export default function SessionDetailPage() {
@@ -43,6 +45,7 @@ export default function SessionDetailPage() {
   
   const [graphStartTime, setGraphStartTime] = useState<number | null>(null);
   const [graphEndTime, setGraphEndTime] = useState<number | null>(null);
+  const [openActionId, setOpenActionId] = useState<string | null>(null); // State to track the currently open action
   
   const isCalibrationSession = useMemo(() => {
     if (!session?.session_type) return false;
@@ -229,9 +232,9 @@ export default function SessionDetailPage() {
     let allActionGroups: ActionGroup[] = [];
 
     // 3. Process each player's data group
-    dataByPlayer.forEach((playerData, playerId) => {
+    dataByPlayer.forEach((playerData, pId) => {
       // Get player name once for this group
-      const groupPlayerName = playerId ? playerMap.get(playerId) || `Player ID: ${playerId.substring(0, 6)}` : 'Unknown Player';
+      const groupPlayerName = pId ? playerMap.get(pId) || `Player ID: ${pId.substring(0, 6)}` : 'Unknown Player';
       
       const playerGroups: ActionGroup[] = [];
       let currentGroup: ActionGroup | null = null;
@@ -258,7 +261,8 @@ export default function SessionDetailPage() {
             endTime: currentTimestamp,
             metric: point.metric, 
             count: 1,
-            playerName: groupPlayerName // Assign the determined player name
+            playerName: groupPlayerName, // Assign the determined player name
+            playerId: pId // Assign playerId
           };
         } else if (point.label === currentGroup.label) {
           // Continue the current group for this player
@@ -275,7 +279,8 @@ export default function SessionDetailPage() {
             endTime: currentTimestamp,
             metric: point.metric,
             count: 1,
-            playerName: groupPlayerName // Assign the determined player name
+            playerName: groupPlayerName, // Assign the determined player name
+            playerId: pId // Assign playerId
           };
         }
       } // End loop through this player's points
@@ -542,57 +547,85 @@ export default function SessionDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>Detected Actions</CardTitle>
-              <CardDescription>Click a row to zoom the graph to that time interval.</CardDescription>
+              <CardDescription>
+                Click a row to view the 3D animation for that action. Or click the time interval to zoom graph.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[150px]">Player</TableHead>
-                    <TableHead className="w-[150px]">Action</TableHead>
-                    <TableHead>Time (Seconds)</TableHead>
-                    <TableHead className="text-right">Metric</TableHead>
-                  </TableRow>
+                  <TableRow><TableHead className="w-[150px]">Player</TableHead><TableHead className="w-[150px]">Action</TableHead><TableHead>Time (Seconds)</TableHead><TableHead className="text-right">Metric</TableHead><TableHead className="w-[40px]"></TableHead></TableRow>
                 </TableHeader>
                 <TableBody>
                   {processedActions.map((action, index) => {
+                    const actionKey = `${action.label}-${index}-${action.startTime}-${action.playerId || 'no-player'}`;
+                    const isAnimationVisible = openActionId === actionKey;
+
                     const startSec = action.startTime.toFixed(2);
                     const endSec = action.endTime.toFixed(2);
                     const interval = `${startSec}s - ${endSec}s`;
 
-                    // --- FORMAT METRIC BASED ON LABEL --- 
                     let metricDisplay = 'N/A';
                     if (action.metric !== null) {
                       if (action.label === 'faceoff') {
                         const metricMs = action.metric * 1000;
-                        // Add sign explicitly for clarity
                         metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
-                      }
-                      else if (action.label === 'save') {
+                      } else if (action.label === 'save') {
                         const metricMs = action.metric * 1;
-                        // Add sign explicitly for clarity
                         metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
                       } else  {
-                        // Default to mph for other actions (pass, shot, etc.)
                         metricDisplay = `${action.metric.toFixed(2)} mph`;
                       }
                     }
 
+                    const toggleAnimation = () => {
+                        setOpenActionId(isAnimationVisible ? null : actionKey);
+                    };
+
                     return (
-                      <TableRow 
-                        key={`${action.label}-${index}-${action.startTime}`}
-                        onClick={() => handleActionClick(action)}
-                        className="cursor-pointer hover:bg-muted/50"
-                      >
-                        <TableCell className="font-medium truncate" title={action.playerName || 'Unknown'}>
-                          {action.playerName || 'Unknown'}
-                        </TableCell>
-                        <TableCell className="font-medium capitalize">{action.label}</TableCell>
-                        <TableCell>{interval}</TableCell>
-                        <TableCell className="text-right">
-                          {metricDisplay}
-                        </TableCell>
-                      </TableRow>
+                      <React.Fragment key={actionKey}>
+                        <TableRow 
+                          className="cursor-pointer hover:bg-muted/50 data-[state=open]:bg-muted/50"
+                          onClick={toggleAnimation} 
+                          aria-expanded={isAnimationVisible}
+                          aria-controls={`animation-content-${actionKey}`}
+                          data-state={isAnimationVisible ? 'open' : 'closed'}
+                        >
+                          <TableCell className="font-medium truncate" title={action.playerName || 'Unknown'}>
+                            {action.playerName || 'Unknown'}
+                          </TableCell>
+                          <TableCell className="font-medium capitalize">{action.label}</TableCell>
+                          <TableCell 
+                            onClick={(e) => { 
+                                e.stopPropagation(); // Prevent row click from toggling animation
+                                handleActionClick(action); 
+                            }}
+                            className="hover:underline"
+                            title="Click to zoom graph"
+                          >
+                            {interval}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {metricDisplay}
+                          </TableCell>
+                          <TableCell className="w-[40px] text-center">
+                            <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${isAnimationVisible ? 'rotate-180' : ''}`} />
+                          </TableCell>
+                        </TableRow>
+                        {isAnimationVisible && (
+                          <TableRow id={`animation-content-${actionKey}`}>
+                            <TableCell colSpan={5}>
+                              <LacrosseStickAnimationLoader
+                                action={action}
+                                sessionId={sessionId}
+                                allSensorData={sensorData}
+                                sessionPlayers={sessionPlayers}
+                                modelPath="/lacrosse_stick.glb" 
+                              />
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                 </TableBody>
