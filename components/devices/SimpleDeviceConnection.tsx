@@ -102,6 +102,7 @@ export function SimpleDeviceConnection() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string>('');
   const [playerSelectionError, setPlayerSelectionError] = useState<string>('');
   const [calibrationTimeRemaining, setCalibrationTimeRemaining] = useState<number | null>(null);
+  const [numberOfGroundballPlayers, setNumberOfGroundballPlayers] = useState<number>(1);
   const calibrationTimerRef = useRef<NodeJS.Timeout | null>(null);
   const beepTimerRef = useRef<NodeJS.Timeout | null>(null);
   const firstBeepTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -419,7 +420,7 @@ export function SimpleDeviceConnection() {
   
   // Effect to update the number of player/device inputs based on session type
   useEffect(() => {
-    const requiredPlayers = getRequiredPlayers(sessionType);
+    const requiredPlayers = getRequiredPlayers(sessionType, sessionType === 'groundball_calibration' ? numberOfGroundballPlayers : undefined);
     setPlayerDeviceMappings(currentMappings => {
       const newMappings = Array(requiredPlayers).fill(null).map((_, index) => {
         // Preserve existing mapping if possible, otherwise create new empty one
@@ -434,7 +435,7 @@ export function SimpleDeviceConnection() {
     });
     // Reset errors when type changes
     setPlayerDeviceErrors(Array(requiredPlayers).fill('')); 
-  }, [sessionType]);
+  }, [sessionType, numberOfGroundballPlayers]);
   
   // Function to update a specific player/device mapping
   const updatePlayerDeviceMapping = useCallback((index: number, field: 'playerId' | 'deviceId', value: string) => {
@@ -1208,6 +1209,28 @@ export function SimpleDeviceConnection() {
                       </SelectContent>
                     </Select>
                   </div>
+                  
+                  {/* Groundball Player Number Selector */}
+                  {sessionType === 'groundball_calibration' && (
+                    <div className="space-y-2">
+                      <Label htmlFor="groundballPlayers">Number of Players (Groundball Calibration)</Label>
+                      <Select
+                        value={String(numberOfGroundballPlayers)}
+                        onValueChange={(value) => setNumberOfGroundballPlayers(parseInt(value, 10))}
+                      >
+                        <SelectTrigger id="groundballPlayers">
+                          <SelectValue placeholder="Select number of players" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map(num => (
+                            <SelectItem key={num} value={String(num)}>
+                              {num} Player{num > 1 ? 's' : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   
                   {/* Session Type Details Display */}
                   {(sessionType.includes('calibration') || sessionType === 'pass_catch_calibration' || sessionType === 'shot_calibration') && (

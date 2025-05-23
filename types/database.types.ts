@@ -29,14 +29,15 @@ export type SessionType =
   | 'solo';
 
 // Helper function to get required players for a session type
-export const getRequiredPlayers = (sessionType?: SessionType): number => {
+export const getRequiredPlayers = (sessionType?: SessionType, groundballCalibrationPlayers?: number): number => {
   if (!sessionType) return 1; // Default to 1 if type is unknown or not set
   switch (sessionType) {
     case 'pass_calibration':
-    case 'groundball_calibration':
     case 'cradle_calibration':
     case 'solo':
       return 1;
+    case 'groundball_calibration':
+      return groundballCalibrationPlayers || 1; // New logic: use provided count or default to 1
     case 'pass_catch_calibration':
     case 'shot_calibration':
     case 'faceoff_calibration':

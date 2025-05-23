@@ -568,11 +568,17 @@ export default function SessionDetailPage() {
                     let metricDisplay = 'N/A';
                     if (action.metric !== null) {
                       if (action.label === 'faceoff') {
-                        const metricMs = action.metric * 1000;
+                        const metricMs = (action.metric * 1000) * -1; 
                         metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
                       } else if (action.label === 'save') {
                         const metricMs = action.metric * 1;
                         metricDisplay = `${metricMs >= 0 ? '+' : ''}${metricMs.toFixed(0)} ms`; 
+                      } else if (action.label === 'groundball') {
+                        const metricMs = (action.metric * 1000); 
+                        metricDisplay = `${metricMs.toFixed(0)} ms`;
+                      }else if (action.label === 'catch') {
+                        const metricM = (action.metric * 1000); 
+                        metricDisplay = `${metricM.toFixed(2)} m`;
                       } else  {
                         metricDisplay = `${action.metric.toFixed(2)} mph`;
                       }
