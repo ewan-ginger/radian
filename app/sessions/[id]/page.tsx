@@ -577,7 +577,7 @@ export default function SessionDetailPage() {
                         const metricMs = (action.metric * 1000); 
                         metricDisplay = `${metricMs.toFixed(0)} ms`;
                       }else if (action.label === 'catch') {
-                        const metricM = (action.metric * 1000); 
+                        const metricM = (action.metric); 
                         metricDisplay = `${metricM.toFixed(2)} m`;
                       } else  {
                         metricDisplay = `${action.metric.toFixed(2)} mph`;
